@@ -9,6 +9,7 @@ SURVIVOR = 3
 class DisasterMap:
 
     def __init__(self, width, height):
+
         self.width = width
         self.height = height
 
@@ -42,5 +43,7 @@ class DisasterMap:
             y = random.randint(0, self.height - 1)
 
             if self.grid[y][x] == EMPTY:
+
                 self.grid[y][x] = SURVIVOR
+
                 placed += 1
