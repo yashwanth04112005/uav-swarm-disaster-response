@@ -5,12 +5,14 @@ from environment.map import OBSTACLE, SURVIVOR
 
 class UAV:
 
-    def __init__(self, drone_id, x, y):
+    def __init__(self, drone_id, x, y, color):
 
         self.id = drone_id
 
         self.x = x
         self.y = y
+
+        self.color = color
 
         self.battery = 100
         self.sensor_range = 2
@@ -26,10 +28,10 @@ class UAV:
             return
 
         directions = [
-            (0, -1),  # up
-            (0, 1),   # down
-            (-1, 0),  # left
-            (1, 0)    # right
+            (0, -1),
+            (0, 1),
+            (-1, 0),
+            (1, 0)
         ]
 
         valid_moves = []
@@ -55,16 +57,10 @@ class UAV:
                 unvisited_moves.append((new_x, new_y))
 
         if unvisited_moves:
-
-            chosen_x, chosen_y = random.choice(
-                unvisited_moves
-            )
+            chosen_x, chosen_y = random.choice(unvisited_moves)
 
         elif valid_moves:
-
-            chosen_x, chosen_y = random.choice(
-                valid_moves
-            )
+            chosen_x, chosen_y = random.choice(valid_moves)
 
         else:
             return
@@ -81,7 +77,7 @@ class UAV:
             self.battery - 1
         )
 
-    def scan(self, disaster_map):
+    def scan(self, disaster_map, shared_survivors):
 
         for dy in range(
             -self.sensor_range,
@@ -101,24 +97,13 @@ class UAV:
                 ):
                     continue
 
-                if (
-                    disaster_map.grid[scan_y][scan_x]
-                    == SURVIVOR
-                ):
+                if disaster_map.grid[scan_y][scan_x] == SURVIVOR:
 
-                    location = (
-                        scan_x,
-                        scan_y
-                    )
+                    location = (scan_x, scan_y)
 
-                    if (
-                        location
-                        not in self.detected_survivors
-                    ):
+                    if location not in shared_survivors:
 
-                        self.detected_survivors.add(
-                            location
-                        )
+                        shared_survivors.add(location)
 
                         print(
                             f"[UAV {self.id}] Survivor detected at {location}"

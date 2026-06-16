@@ -19,6 +19,8 @@ GRID_HEIGHT = 20
 WINDOW_WIDTH = GRID_WIDTH * CELL_SIZE
 WINDOW_HEIGHT = GRID_HEIGHT * CELL_SIZE
 
+NUM_UAVS = 5
+
 pygame.init()
 
 screen = pygame.display.set_mode(
@@ -45,20 +47,44 @@ def get_random_empty_cell():
 
     while True:
 
-        x = random.randint(0, GRID_WIDTH - 1)
-        y = random.randint(0, GRID_HEIGHT - 1)
+        x = random.randint(
+            0,
+            GRID_WIDTH - 1
+        )
+
+        y = random.randint(
+            0,
+            GRID_HEIGHT - 1
+        )
 
         if disaster_map.grid[y][x] == EMPTY:
             return x, y
 
 
-spawn_x, spawn_y = get_random_empty_cell()
+uav_colors = [
+    (0, 100, 255),
+    (255, 0, 0),
+    (0, 180, 0),
+    (180, 0, 180),
+    (255, 180, 0)
+]
 
-uav = UAV(
-    drone_id=1,
-    x=spawn_x,
-    y=spawn_y
-)
+uavs = []
+
+for i in range(NUM_UAVS):
+
+    spawn_x, spawn_y = get_random_empty_cell()
+
+    uavs.append(
+        UAV(
+            drone_id=i + 1,
+            x=spawn_x,
+            y=spawn_y,
+            color=uav_colors[i]
+        )
+    )
+
+shared_survivors = set()
 
 MOVE_EVENT = pygame.USEREVENT + 1
 
@@ -103,58 +129,92 @@ def draw_map():
             )
 
 
-def draw_sensor_range():
+def draw_uavs():
 
-    center_x = uav.x * CELL_SIZE + CELL_SIZE // 2
-    center_y = uav.y * CELL_SIZE + CELL_SIZE // 2
+    for uav in uavs:
 
-    radius = uav.sensor_range * CELL_SIZE
+        center_x = (
+            uav.x * CELL_SIZE +
+            CELL_SIZE // 2
+        )
 
-    pygame.draw.circle(
-        screen,
-        (100, 180, 255),
-        (center_x, center_y),
-        radius,
-        1
-    )
+        center_y = (
+            uav.y * CELL_SIZE +
+            CELL_SIZE // 2
+        )
 
+        radius = (
+            uav.sensor_range *
+            CELL_SIZE
+        )
 
-def draw_uav():
+        pygame.draw.circle(
+            screen,
+            (150, 200, 255),
+            (center_x, center_y),
+            radius,
+            1
+        )
 
-    center_x = uav.x * CELL_SIZE + CELL_SIZE // 2
-    center_y = uav.y * CELL_SIZE + CELL_SIZE // 2
-
-    pygame.draw.circle(
-        screen,
-        (0, 100, 255),
-        (center_x, center_y),
-        CELL_SIZE // 3
-    )
+        pygame.draw.circle(
+            screen,
+            uav.color,
+            (center_x, center_y),
+            CELL_SIZE // 3
+        )
 
 
 def draw_status():
 
+    total_visited = set()
+
+    total_battery = 0
+
+    for uav in uavs:
+
+        total_visited.update(
+            uav.visited_cells
+        )
+
+        total_battery += uav.battery
+
+    avg_battery = (
+        total_battery /
+        len(uavs)
+    )
+
     battery_text = font.render(
-        f"Battery: {uav.battery}%",
+        f"Avg Battery: {avg_battery:.1f}%",
         True,
         (0, 0, 0)
     )
 
     visited_text = font.render(
-        f"Visited: {len(uav.visited_cells)}",
+        f"Coverage: {len(total_visited)} cells",
         True,
         (0, 0, 0)
     )
 
-    survivors_text = font.render(
-        f"Detected Survivors: {len(uav.detected_survivors)}",
+    survivor_text = font.render(
+        f"Shared Survivors: {len(shared_survivors)}",
         True,
         (0, 0, 0)
     )
 
-    screen.blit(battery_text, (10, 10))
-    screen.blit(visited_text, (10, 35))
-    screen.blit(survivors_text, (10, 60))
+    screen.blit(
+        battery_text,
+        (10, 10)
+    )
+
+    screen.blit(
+        visited_text,
+        (10, 35)
+    )
+
+    screen.blit(
+        survivor_text,
+        (10, 60)
+    )
 
 
 running = True
@@ -168,14 +228,25 @@ while running:
 
         if event.type == MOVE_EVENT:
 
-            uav.move(disaster_map)
-            uav.scan(disaster_map)
+            for uav in uavs:
 
-    screen.fill((255, 255, 255))
+                uav.move(
+                    disaster_map
+                )
+
+                uav.scan(
+                    disaster_map,
+                    shared_survivors
+                )
+
+    screen.fill(
+        (255, 255, 255)
+    )
 
     draw_map()
-    draw_sensor_range()
-    draw_uav()
+
+    draw_uavs()
+
     draw_status()
 
     pygame.display.flip()
