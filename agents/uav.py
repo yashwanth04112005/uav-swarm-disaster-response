@@ -1,11 +1,20 @@
 import random
 
-from environment.map import OBSTACLE, SURVIVOR
+from environment.map import (
+    OBSTACLE,
+    SURVIVOR
+)
 
 
 class UAV:
 
-    def __init__(self, drone_id, x, y, color):
+    def __init__(
+        self,
+        drone_id,
+        x,
+        y,
+        color
+    ):
 
         self.id = drone_id
 
@@ -15,17 +24,25 @@ class UAV:
         self.color = color
 
         self.battery = 100
+
         self.sensor_range = 2
 
         self.visited_cells = set()
-        self.visited_cells.add((self.x, self.y))
 
-        self.detected_survivors = set()
+        self.visited_cells.add(
+            (self.x, self.y)
+        )
 
-    def move(self, disaster_map):
+    def move(
+        self,
+        disaster_map,
+        sector
+    ):
 
         if self.battery <= 0:
             return
+
+        sector_start_x, sector_end_x = sector
 
         directions = [
             (0, -1),
@@ -35,6 +52,7 @@ class UAV:
         ]
 
         valid_moves = []
+
         unvisited_moves = []
 
         for dx, dy in directions:
@@ -43,24 +61,47 @@ class UAV:
             new_y = self.y + dy
 
             if not (
-                0 <= new_x < disaster_map.width and
+                sector_start_x <= new_x <= sector_end_x
+            ):
+                continue
+
+            if not (
+                0 <= new_x < disaster_map.width
+                and
                 0 <= new_y < disaster_map.height
             ):
                 continue
 
-            if disaster_map.grid[new_y][new_x] == OBSTACLE:
+            if (
+                disaster_map.grid[new_y][new_x]
+                == OBSTACLE
+            ):
                 continue
 
-            valid_moves.append((new_x, new_y))
+            valid_moves.append(
+                (new_x, new_y)
+            )
 
-            if (new_x, new_y) not in self.visited_cells:
-                unvisited_moves.append((new_x, new_y))
+            if (
+                new_x,
+                new_y
+            ) not in self.visited_cells:
+
+                unvisited_moves.append(
+                    (new_x, new_y)
+                )
 
         if unvisited_moves:
-            chosen_x, chosen_y = random.choice(unvisited_moves)
+
+            chosen_x, chosen_y = random.choice(
+                unvisited_moves
+            )
 
         elif valid_moves:
-            chosen_x, chosen_y = random.choice(valid_moves)
+
+            chosen_x, chosen_y = random.choice(
+                valid_moves
+            )
 
         else:
             return
@@ -77,7 +118,11 @@ class UAV:
             self.battery - 1
         )
 
-    def scan(self, disaster_map, shared_survivors):
+    def scan(
+        self,
+        disaster_map,
+        coordinator
+    ):
 
         for dy in range(
             -self.sensor_range,
@@ -92,18 +137,30 @@ class UAV:
                 scan_y = self.y + dy
 
                 if not (
-                    0 <= scan_x < disaster_map.width and
+                    0 <= scan_x < disaster_map.width
+                    and
                     0 <= scan_y < disaster_map.height
                 ):
                     continue
 
-                if disaster_map.grid[scan_y][scan_x] == SURVIVOR:
+                if (
+                    disaster_map.grid[scan_y][scan_x]
+                    == SURVIVOR
+                ):
 
-                    location = (scan_x, scan_y)
+                    location = (
+                        scan_x,
+                        scan_y
+                    )
 
-                    if location not in shared_survivors:
+                    if (
+                        location
+                        not in coordinator.get_survivors()
+                    ):
 
-                        shared_survivors.add(location)
+                        coordinator.add_survivor(
+                            location
+                        )
 
                         print(
                             f"[UAV {self.id}] Survivor detected at {location}"

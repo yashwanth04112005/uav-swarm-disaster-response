@@ -3,6 +3,10 @@ import pygame
 
 from agents.uav import UAV
 
+from swarm.coordinator import (
+    SwarmCoordinator
+)
+
 from environment.map import (
     DisasterMap,
     EMPTY,
@@ -28,12 +32,15 @@ screen = pygame.display.set_mode(
 )
 
 pygame.display.set_caption(
-    "Multi-Agent UAV Swarm Simulation"
+    "Sector Coordinated UAV Swarm"
 )
 
 clock = pygame.time.Clock()
 
-font = pygame.font.SysFont(None, 28)
+font = pygame.font.SysFont(
+    None,
+    28
+)
 
 disaster_map = DisasterMap(
     GRID_WIDTH,
@@ -41,6 +48,12 @@ disaster_map = DisasterMap(
 )
 
 disaster_map.generate()
+
+coordinator = SwarmCoordinator(
+    GRID_WIDTH,
+    GRID_HEIGHT,
+    NUM_UAVS
+)
 
 
 def get_random_empty_cell():
@@ -77,14 +90,12 @@ for i in range(NUM_UAVS):
 
     uavs.append(
         UAV(
-            drone_id=i + 1,
-            x=spawn_x,
-            y=spawn_y,
-            color=uav_colors[i]
+            i + 1,
+            spawn_x,
+            spawn_y,
+            uav_colors[i]
         )
     )
-
-shared_survivors = set()
 
 MOVE_EVENT = pygame.USEREVENT + 1
 
@@ -106,8 +117,6 @@ def draw_map():
     for y in range(GRID_HEIGHT):
         for x in range(GRID_WIDTH):
 
-            value = disaster_map.grid[y][x]
-
             rect = pygame.Rect(
                 x * CELL_SIZE,
                 y * CELL_SIZE,
@@ -117,7 +126,9 @@ def draw_map():
 
             pygame.draw.rect(
                 screen,
-                colors[value],
+                colors[
+                    disaster_map.grid[y][x]
+                ],
                 rect
             )
 
@@ -143,78 +154,57 @@ def draw_uavs():
             CELL_SIZE // 2
         )
 
-        radius = (
-            uav.sensor_range *
-            CELL_SIZE
-        )
-
-        pygame.draw.circle(
-            screen,
-            (150, 200, 255),
-            (center_x, center_y),
-            radius,
-            1
-        )
-
         pygame.draw.circle(
             screen,
             uav.color,
-            (center_x, center_y),
+            (
+                center_x,
+                center_y
+            ),
             CELL_SIZE // 3
         )
 
 
 def draw_status():
 
-    total_visited = set()
+    coverage = set()
 
-    total_battery = 0
+    battery_sum = 0
 
     for uav in uavs:
 
-        total_visited.update(
+        coverage.update(
             uav.visited_cells
         )
 
-        total_battery += uav.battery
+        battery_sum += uav.battery
 
     avg_battery = (
-        total_battery /
-        len(uavs)
+        battery_sum /
+        NUM_UAVS
     )
 
-    battery_text = font.render(
+    text1 = font.render(
+        f"Coverage: {len(coverage)}",
+        True,
+        (0, 0, 0)
+    )
+
+    text2 = font.render(
         f"Avg Battery: {avg_battery:.1f}%",
         True,
         (0, 0, 0)
     )
 
-    visited_text = font.render(
-        f"Coverage: {len(total_visited)} cells",
+    text3 = font.render(
+        f"Shared Survivors: {len(coordinator.get_survivors())}",
         True,
         (0, 0, 0)
     )
 
-    survivor_text = font.render(
-        f"Shared Survivors: {len(shared_survivors)}",
-        True,
-        (0, 0, 0)
-    )
-
-    screen.blit(
-        battery_text,
-        (10, 10)
-    )
-
-    screen.blit(
-        visited_text,
-        (10, 35)
-    )
-
-    screen.blit(
-        survivor_text,
-        (10, 60)
-    )
+    screen.blit(text1, (10, 10))
+    screen.blit(text2, (10, 35))
+    screen.blit(text3, (10, 60))
 
 
 running = True
@@ -230,13 +220,18 @@ while running:
 
             for uav in uavs:
 
+                sector = coordinator.get_sector(
+                    uav.id
+                )
+
                 uav.move(
-                    disaster_map
+                    disaster_map,
+                    sector
                 )
 
                 uav.scan(
                     disaster_map,
-                    shared_survivors
+                    coordinator
                 )
 
     screen.fill(
