@@ -56,13 +56,16 @@ coordinator = SwarmCoordinator(
 )
 
 
-def get_random_empty_cell():
+def get_random_empty_cell_in_sector(
+    start_x,
+    end_x
+):
 
     while True:
 
         x = random.randint(
-            0,
-            GRID_WIDTH - 1
+            start_x,
+            end_x
         )
 
         y = random.randint(
@@ -86,7 +89,18 @@ uavs = []
 
 for i in range(NUM_UAVS):
 
-    spawn_x, spawn_y = get_random_empty_cell()
+    sector = coordinator.get_sector(
+        i + 1
+    )
+
+    start_x, end_x = sector
+
+    spawn_x, spawn_y = (
+        get_random_empty_cell_in_sector(
+            start_x,
+            end_x
+        )
+    )
 
     uavs.append(
         UAV(
@@ -140,6 +154,26 @@ def draw_map():
             )
 
 
+def draw_sectors():
+
+    for sector in coordinator.sectors:
+
+        start_x, end_x = sector
+
+        line_x = (
+            start_x *
+            CELL_SIZE
+        )
+
+        pygame.draw.line(
+            screen,
+            (100, 100, 255),
+            (line_x, 0),
+            (line_x, WINDOW_HEIGHT),
+            2
+        )
+
+
 def draw_uavs():
 
     for uav in uavs:
@@ -177,7 +211,9 @@ def draw_status():
             uav.visited_cells
         )
 
-        battery_sum += uav.battery
+        battery_sum += (
+            uav.battery
+        )
 
     avg_battery = (
         battery_sum /
@@ -202,9 +238,20 @@ def draw_status():
         (0, 0, 0)
     )
 
-    screen.blit(text1, (10, 10))
-    screen.blit(text2, (10, 35))
-    screen.blit(text3, (10, 60))
+    screen.blit(
+        text1,
+        (10, 10)
+    )
+
+    screen.blit(
+        text2,
+        (10, 35)
+    )
+
+    screen.blit(
+        text3,
+        (10, 60)
+    )
 
 
 running = True
@@ -220,8 +267,10 @@ while running:
 
             for uav in uavs:
 
-                sector = coordinator.get_sector(
-                    uav.id
+                sector = (
+                    coordinator.get_sector(
+                        uav.id
+                    )
                 )
 
                 uav.move(
@@ -239,6 +288,8 @@ while running:
     )
 
     draw_map()
+
+    draw_sectors()
 
     draw_uavs()
 
