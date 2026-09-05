@@ -5,8 +5,13 @@ class SwarmCoordinator:
         self.map_width = map_width
         self.map_height = map_height
 
+        # Shared survivor information
         self.shared_survivors = set()
 
+        # Shared coverage information
+        self.shared_coverage = set()
+
+        # Sector assignments
         self.sectors = []
 
         sector_width = map_width // num_uavs
@@ -35,3 +40,30 @@ class SwarmCoordinator:
     def get_survivors(self):
 
         return self.shared_survivors
+
+    def add_coverage(self, location):
+
+        self.shared_coverage.add(location)
+
+    def add_coverage_cells(self, cells):
+
+        self.shared_coverage.update(cells)
+
+    def get_coverage(self):
+
+        return self.shared_coverage
+
+    def get_coverage_percentage(self):
+
+        total_cells = (
+            self.map_width *
+            self.map_height
+        )
+
+        if total_cells == 0:
+            return 0.0
+
+        return (
+            len(self.shared_coverage) /
+            total_cells
+        ) * 100
