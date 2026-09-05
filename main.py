@@ -12,9 +12,14 @@ from environment.map import (
     EMPTY,
     OBSTACLE,
     HAZARD,
-    SURVIVOR
+    SURVIVOR,
+    RESCUED
 )
 
+
+# ==================================================
+# CONFIGURATION
+# ==================================================
 
 CELL_SIZE = 30
 
@@ -26,11 +31,21 @@ WINDOW_HEIGHT = GRID_HEIGHT * CELL_SIZE
 
 NUM_UAVS = 5
 
+MOVE_INTERVAL = 500
+HAZARD_INTERVAL = 10000
+
+
+# ==================================================
+# PYGAME INITIALIZATION
+# ==================================================
 
 pygame.init()
 
 screen = pygame.display.set_mode(
-    (WINDOW_WIDTH, WINDOW_HEIGHT)
+    (
+        WINDOW_WIDTH,
+        WINDOW_HEIGHT
+    )
 )
 
 pygame.display.set_caption(
@@ -41,13 +56,18 @@ clock = pygame.time.Clock()
 
 font = pygame.font.SysFont(
     None,
-    28
+    24
+)
+
+small_font = pygame.font.SysFont(
+    None,
+    20
 )
 
 
-# --------------------------------------------------
+# ==================================================
 # CREATE DISASTER ENVIRONMENT
-# --------------------------------------------------
+# ==================================================
 
 disaster_map = DisasterMap(
     GRID_WIDTH,
@@ -57,9 +77,9 @@ disaster_map = DisasterMap(
 disaster_map.generate()
 
 
-# --------------------------------------------------
+# ==================================================
 # CREATE SWARM COORDINATOR
-# --------------------------------------------------
+# ==================================================
 
 coordinator = SwarmCoordinator(
     GRID_WIDTH,
@@ -68,16 +88,37 @@ coordinator = SwarmCoordinator(
 )
 
 
-# --------------------------------------------------
-# UAV SPAWN FUNCTION
-# --------------------------------------------------
+# ==================================================
+# UAV COLORS
+# ==================================================
+
+uav_colors = [
+    (0, 100, 255),
+    (255, 0, 0),
+    (0, 180, 0),
+    (180, 0, 180),
+    (255, 180, 0)
+]
+
+
+# ==================================================
+# RANDOM UAV SPAWN
+# ==================================================
 
 def get_random_empty_cell_in_sector(
     start_x,
     end_x
 ):
 
-    while True:
+    attempts = 0
+
+    max_attempts = (
+        GRID_WIDTH *
+        GRID_HEIGHT *
+        10
+    )
+
+    while attempts < max_attempts:
 
         x = random.randint(
             start_x,
@@ -89,30 +130,37 @@ def get_random_empty_cell_in_sector(
             GRID_HEIGHT - 1
         )
 
-        if disaster_map.grid[y][x] == EMPTY:
+        if (
+            disaster_map.grid[y][x]
+            == EMPTY
+        ):
 
-            return x, y
+            return (
+                x,
+                y
+            )
+
+        attempts += 1
+
+    return (
+        start_x,
+        0
+    )
 
 
-# --------------------------------------------------
+# ==================================================
 # CREATE UAVS
-# --------------------------------------------------
-
-uav_colors = [
-    (0, 100, 255),
-    (255, 0, 0),
-    (0, 180, 0),
-    (180, 0, 180),
-    (255, 180, 0)
-]
+# ==================================================
 
 uavs = []
 
 
 for i in range(NUM_UAVS):
 
+    uav_id = i + 1
+
     sector = coordinator.get_sector(
-        i + 1
+        uav_id
     )
 
     start_x, end_x = sector
@@ -124,109 +172,198 @@ for i in range(NUM_UAVS):
         )
     )
 
+    uav = UAV(
+        uav_id,
+        spawn_x,
+        spawn_y,
+        uav_colors[i]
+    )
+
     uavs.append(
-        UAV(
-            i + 1,
-            spawn_x,
-            spawn_y,
-            uav_colors[i]
-        )
+        uav
+    )
+
+    # Register UAV position
+    coordinator.update_uav_position(
+        uav_id,
+        uav.get_position()
+    )
+
+    # Register UAV base
+    coordinator.set_base(
+        uav_id,
+        uav.base_position
+    )
+
+    # Initial coverage
+    coordinator.add_coverage(
+        uav.get_position()
     )
 
 
-# --------------------------------------------------
-# UAV MOVEMENT TIMER
-# --------------------------------------------------
+# ==================================================
+# PYGAME EVENTS
+# ==================================================
 
 MOVE_EVENT = pygame.USEREVENT + 1
 
+HAZARD_EVENT = pygame.USEREVENT + 2
+
+
 pygame.time.set_timer(
     MOVE_EVENT,
-    500
+    MOVE_INTERVAL
 )
-
-
-# --------------------------------------------------
-# HAZARD EXPANSION TIMER
-# --------------------------------------------------
-
-HAZARD_EVENT = pygame.USEREVENT + 2
 
 pygame.time.set_timer(
     HAZARD_EVENT,
-    2000
+    HAZARD_INTERVAL
 )
 
 
-# --------------------------------------------------
+# ==================================================
 # DRAW DISASTER MAP
-# --------------------------------------------------
+# ==================================================
 
 def draw_map():
 
     colors = {
-        EMPTY: (240, 240, 240),
-        OBSTACLE: (60, 60, 60),
-        HAZARD: (255, 140, 0),
-        SURVIVOR: (0, 200, 0)
+
+        EMPTY: (
+            240,
+            240,
+            240
+        ),
+
+        OBSTACLE: (
+            60,
+            60,
+            60
+        ),
+
+        HAZARD: (
+            255,
+            140,
+            0
+        ),
+
+        SURVIVOR: (
+            0,
+            200,
+            0
+        ),
+
+        RESCUED: (
+            0,
+            120,
+            0
+        )
     }
 
-    for y in range(GRID_HEIGHT):
+    for y in range(
+        GRID_HEIGHT
+    ):
 
-        for x in range(GRID_WIDTH):
+        for x in range(
+            GRID_WIDTH
+        ):
 
             rect = pygame.Rect(
+
                 x * CELL_SIZE,
+
                 y * CELL_SIZE,
+
                 CELL_SIZE,
+
                 CELL_SIZE
             )
 
+            cell_type = (
+                disaster_map.grid[y][x]
+            )
+
             pygame.draw.rect(
+
                 screen,
-                colors[
-                    disaster_map.grid[y][x]
-                ],
+
+                colors.get(
+                    cell_type,
+                    (255, 255, 255)
+                ),
+
                 rect
             )
 
             pygame.draw.rect(
+
                 screen,
+
                 (180, 180, 180),
+
                 rect,
+
                 1
             )
 
 
-# --------------------------------------------------
-# DRAW COVERAGE HEATMAP
-# --------------------------------------------------
+# ==================================================
+# DRAW COVERAGE
+# ==================================================
 
 def draw_coverage():
 
-    coverage = coordinator.get_coverage()
+    coverage = (
+        coordinator.get_coverage()
+    )
 
     for x, y in coverage:
 
-        cell_type = disaster_map.grid[y][x]
+        if not (
+            0 <= x < GRID_WIDTH
+            and
+            0 <= y < GRID_HEIGHT
+        ):
 
+            continue
+
+        cell_type = (
+            disaster_map.grid[y][x]
+        )
+
+        # Do not cover important map objects
         if cell_type != EMPTY:
+
             continue
 
         rect = pygame.Rect(
+
             x * CELL_SIZE,
+
             y * CELL_SIZE,
+
             CELL_SIZE,
+
             CELL_SIZE
         )
 
         coverage_surface = pygame.Surface(
-            (CELL_SIZE, CELL_SIZE),
+
+            (
+                CELL_SIZE,
+                CELL_SIZE
+            ),
+
             pygame.SRCALPHA
         )
 
         coverage_surface.fill(
-            (100, 180, 255, 80)
+            (
+                100,
+                180,
+                255,
+                80
+            )
         )
 
         screen.blit(
@@ -235,62 +372,288 @@ def draw_coverage():
         )
 
 
-# --------------------------------------------------
+# ==================================================
+# DRAW SENSOR RANGES
+# ==================================================
+
+def draw_sensor_ranges():
+
+    for uav in uavs:
+
+        center_x = (
+            uav.x * CELL_SIZE
+            + CELL_SIZE // 2
+        )
+
+        center_y = (
+            uav.y * CELL_SIZE
+            + CELL_SIZE // 2
+        )
+
+        radius = (
+            uav.sensor_range
+            * CELL_SIZE
+        )
+
+        sensor_surface = pygame.Surface(
+
+            (
+                WINDOW_WIDTH,
+                WINDOW_HEIGHT
+            ),
+
+            pygame.SRCALPHA
+        )
+
+        pygame.draw.circle(
+
+            sensor_surface,
+
+            (
+                100,
+                150,
+                255,
+                25
+            ),
+
+            (
+                center_x,
+                center_y
+            ),
+
+            radius
+        )
+
+        screen.blit(
+            sensor_surface,
+            (0, 0)
+        )
+
+
+# ==================================================
 # DRAW SECTORS
-# --------------------------------------------------
+# ==================================================
 
 def draw_sectors():
 
-    for sector in coordinator.sectors:
+    for index, sector in enumerate(
+        coordinator.sectors
+    ):
 
         start_x, end_x = sector
 
+        # Draw boundary at start
         line_x = (
             start_x *
             CELL_SIZE
         )
 
         pygame.draw.line(
+
             screen,
-            (100, 100, 255),
-            (line_x, 0),
-            (line_x, WINDOW_HEIGHT),
+
+            (
+                80,
+                80,
+                255
+            ),
+
+            (
+                line_x,
+                0
+            ),
+
+            (
+                line_x,
+                WINDOW_HEIGHT
+            ),
+
+            2
+        )
+
+        # Sector label
+        label = small_font.render(
+
+            f"S{index + 1}",
+
+            True,
+
+            (
+                70,
+                70,
+                180
+            )
+        )
+
+        screen.blit(
+
+            label,
+
+            (
+                start_x * CELL_SIZE + 5,
+                WINDOW_HEIGHT - 22
+            )
+        )
+
+
+# ==================================================
+# DRAW BASES
+# ==================================================
+
+def draw_bases():
+
+    for uav in uavs:
+
+        base_x, base_y = (
+            uav.base_position
+        )
+
+        center_x = (
+            base_x * CELL_SIZE
+            + CELL_SIZE // 2
+        )
+
+        center_y = (
+            base_y * CELL_SIZE
+            + CELL_SIZE // 2
+        )
+
+        pygame.draw.rect(
+
+            screen,
+
+            (
+                0,
+                0,
+                0
+            ),
+
+            pygame.Rect(
+
+                center_x - 6,
+                center_y - 6,
+                12,
+                12
+            )
+        )
+
+
+# ==================================================
+# DRAW TARGET PATHS
+# ==================================================
+
+def draw_target_paths():
+
+    for uav in uavs:
+
+        if not uav.target:
+
+            continue
+
+        target_x, target_y = (
+            uav.target
+        )
+
+        start_x = (
+            uav.x * CELL_SIZE
+            + CELL_SIZE // 2
+        )
+
+        start_y = (
+            uav.y * CELL_SIZE
+            + CELL_SIZE // 2
+        )
+
+        end_x = (
+            target_x * CELL_SIZE
+            + CELL_SIZE // 2
+        )
+
+        end_y = (
+            target_y * CELL_SIZE
+            + CELL_SIZE // 2
+        )
+
+        pygame.draw.line(
+
+            screen,
+
+            uav.color,
+
+            (
+                start_x,
+                start_y
+            ),
+
+            (
+                end_x,
+                end_y
+            ),
+
             2
         )
 
 
-# --------------------------------------------------
+# ==================================================
 # DRAW UAVS
-# --------------------------------------------------
+# ==================================================
 
 def draw_uavs():
 
     for uav in uavs:
 
         center_x = (
-            uav.x * CELL_SIZE +
-            CELL_SIZE // 2
+            uav.x * CELL_SIZE
+            + CELL_SIZE // 2
         )
 
         center_y = (
-            uav.y * CELL_SIZE +
-            CELL_SIZE // 2
+            uav.y * CELL_SIZE
+            + CELL_SIZE // 2
         )
 
         pygame.draw.circle(
+
             screen,
+
             uav.color,
+
             (
                 center_x,
                 center_y
             ),
+
             CELL_SIZE // 3
         )
 
+        # UAV ID
+        text = small_font.render(
 
-# --------------------------------------------------
+            str(uav.id),
+
+            True,
+
+            (255, 255, 255)
+        )
+
+        text_rect = (
+            text.get_rect(
+                center=(
+                    center_x,
+                    center_y
+                )
+            )
+        )
+
+        screen.blit(
+            text,
+            text_rect
+        )
+
+
+# ==================================================
 # DRAW STATUS
-# --------------------------------------------------
+# ==================================================
 
 def draw_status():
 
@@ -299,48 +662,107 @@ def draw_status():
     )
 
     coverage_percentage = (
-        coordinator.get_coverage_percentage()
+        coordinator
+        .get_coverage_percentage()
     )
 
-    battery_sum = 0
+    detected = len(
+        coordinator.get_survivors()
+    )
 
-    for uav in uavs:
+    rescued = len(
+        coordinator
+        .get_rescued_survivors()
+    )
 
-        battery_sum += uav.battery
+    battery_sum = sum(
+        uav.battery
+        for uav in uavs
+    )
 
     avg_battery = (
         battery_sum /
-        NUM_UAVS
+        len(uavs)
     )
 
+    # ----------------------------------------------
+    # Background panel
+    # ----------------------------------------------
+
+    panel = pygame.Surface(
+
+        (
+            330,
+            135
+        ),
+
+        pygame.SRCALPHA
+    )
+
+    panel.fill(
+        (
+            255,
+            255,
+            255,
+            210
+        )
+    )
+
+    screen.blit(
+        panel,
+        (5, 5)
+    )
+
+    # ----------------------------------------------
+    # General statistics
+    # ----------------------------------------------
+
     text1 = font.render(
-        f"Coverage: {coverage_count} cells "
+
+        f"Coverage: {coverage_count} "
         f"({coverage_percentage:.1f}%)",
+
         True,
+
         (0, 0, 0)
     )
 
     text2 = font.render(
-        f"Avg Battery: {avg_battery:.1f}%",
+
+        f"Avg Battery: "
+        f"{avg_battery:.1f}%",
+
         True,
+
         (0, 0, 0)
     )
 
     text3 = font.render(
-        f"Shared Survivors: "
-        f"{len(coordinator.get_survivors())}",
+
+        f"Detected: {detected}",
+
         True,
+
+        (0, 0, 0)
+    )
+
+    text4 = font.render(
+
+        f"Rescued: {rescued}",
+
+        True,
+
         (0, 0, 0)
     )
 
     screen.blit(
         text1,
-        (10, 10)
+        (10, 8)
     )
 
     screen.blit(
         text2,
-        (10, 35)
+        (10, 34)
     )
 
     screen.blit(
@@ -348,29 +770,130 @@ def draw_status():
         (10, 60)
     )
 
+    screen.blit(
+        text4,
+        (10, 86)
+    )
 
-# --------------------------------------------------
+
+# ==================================================
+# DRAW UAV STATUS
+# ==================================================
+
+def draw_uav_status():
+
+    start_y = 145
+
+    for index, uav in enumerate(
+        uavs
+    ):
+
+        status_text = (
+
+            f"UAV {uav.id}: "
+            f"{uav.status} "
+            f"{uav.battery}%"
+        )
+
+        text = small_font.render(
+
+            status_text,
+
+            True,
+
+            uav.color
+        )
+
+        screen.blit(
+
+            text,
+
+            (
+                10,
+                start_y +
+                index * 22
+            )
+        )
+
+
+# ==================================================
+# DRAW SURVIVOR MARKERS
+# ==================================================
+
+def draw_survivor_markers():
+
+    survivors = (
+        coordinator.get_survivors()
+    )
+
+    for x, y in survivors:
+
+        center_x = (
+            x * CELL_SIZE
+            + CELL_SIZE // 2
+        )
+
+        center_y = (
+            y * CELL_SIZE
+            + CELL_SIZE // 2
+        )
+
+        # Yellow target ring
+        pygame.draw.circle(
+
+            screen,
+
+            (
+                255,
+                255,
+                0
+            ),
+
+            (
+                center_x,
+                center_y
+            ),
+
+            CELL_SIZE // 2 - 3,
+
+            2
+        )
+
+
+# ==================================================
 # MAIN SIMULATION LOOP
-# --------------------------------------------------
+# ==================================================
 
 running = True
 
 
 while running:
 
+    # ==================================================
+    # EVENT HANDLING
+    # ==================================================
+
     for event in pygame.event.get():
+
+        # ----------------------------------------------
+        # QUIT
+        # ----------------------------------------------
 
         if event.type == pygame.QUIT:
 
             running = False
 
-        # ------------------------------------------
+        # ----------------------------------------------
         # UAV MOVEMENT
-        # ------------------------------------------
+        # ----------------------------------------------
 
-        if event.type == MOVE_EVENT:
+        elif event.type == MOVE_EVENT:
 
             for uav in uavs:
+
+                if uav.status == "DEAD":
+
+                    continue
 
                 sector = (
                     coordinator.get_sector(
@@ -378,50 +901,109 @@ while running:
                     )
                 )
 
+                # Move UAV
                 uav.move(
-                    disaster_map,
-                    sector
-                )
 
-                coordinator.add_coverage_cells(
-                    uav.visited_cells
-                )
-
-                uav.scan(
                     disaster_map,
+
+                    sector,
+
                     coordinator
                 )
 
-        # ------------------------------------------
-        # HAZARD EXPANSION
-        # ------------------------------------------
+                # Register position
+                coordinator.update_uav_position(
 
-        if event.type == HAZARD_EVENT:
+                    uav.id,
+
+                    uav.get_position()
+                )
+
+                # Add visited cells
+                coordinator.add_coverage_cells(
+
+                    uav.visited_cells
+                )
+
+                # Scan environment
+                uav.scan(
+
+                    disaster_map,
+
+                    coordinator
+                )
+
+                # Attempt rescue if target reached
+                uav.attempt_rescue(
+
+                    disaster_map,
+
+                    coordinator
+                )
+
+        # ----------------------------------------------
+        # HAZARD EXPANSION
+        # ----------------------------------------------
+
+        elif event.type == HAZARD_EVENT:
 
             disaster_map.expand_hazards()
 
             print(
-                "[DISASTER] Hazards expanded."
+                "[DISASTER] "
+                "Hazards expanded."
             )
 
 
+    # ==================================================
+    # RENDER
+    # ==================================================
+
     screen.fill(
-        (255, 255, 255)
+        (
+            255,
+            255,
+            255
+        )
     )
 
+    # Base map
     draw_map()
 
+    # Coverage
     draw_coverage()
 
+    # Sensor visualization
+    draw_sensor_ranges()
+
+    # Sector boundaries
     draw_sectors()
 
+    # UAV bases
+    draw_bases()
+
+    # Survivor target markers
+    draw_survivor_markers()
+
+    # Target communication lines
+    draw_target_paths()
+
+    # UAVs
     draw_uavs()
 
+    # Main statistics
     draw_status()
+
+    # UAV-specific status
+    draw_uav_status()
 
     pygame.display.flip()
 
     clock.tick(60)
 
+
+# ==================================================
+# SHUTDOWN
+# ==================================================
 
 pygame.quit()
