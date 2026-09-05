@@ -90,6 +90,7 @@ def get_random_empty_cell_in_sector(
         )
 
         if disaster_map.grid[y][x] == EMPTY:
+
             return x, y
 
 
@@ -134,7 +135,7 @@ for i in range(NUM_UAVS):
 
 
 # --------------------------------------------------
-# MOVEMENT TIMER
+# UAV MOVEMENT TIMER
 # --------------------------------------------------
 
 MOVE_EVENT = pygame.USEREVENT + 1
@@ -142,6 +143,18 @@ MOVE_EVENT = pygame.USEREVENT + 1
 pygame.time.set_timer(
     MOVE_EVENT,
     500
+)
+
+
+# --------------------------------------------------
+# HAZARD EXPANSION TIMER
+# --------------------------------------------------
+
+HAZARD_EVENT = pygame.USEREVENT + 2
+
+pygame.time.set_timer(
+    HAZARD_EVENT,
+    2000
 )
 
 
@@ -195,8 +208,6 @@ def draw_coverage():
 
     for x, y in coverage:
 
-        # Do not cover obstacles, hazards or survivors
-        # with the heatmap.
         cell_type = disaster_map.grid[y][x]
 
         if cell_type != EMPTY:
@@ -303,7 +314,8 @@ def draw_status():
     )
 
     text1 = font.render(
-        f"Coverage: {coverage_count} cells ({coverage_percentage:.1f}%)",
+        f"Coverage: {coverage_count} cells "
+        f"({coverage_percentage:.1f}%)",
         True,
         (0, 0, 0)
     )
@@ -315,7 +327,8 @@ def draw_status():
     )
 
     text3 = font.render(
-        f"Shared Survivors: {len(coordinator.get_survivors())}",
+        f"Shared Survivors: "
+        f"{len(coordinator.get_survivors())}",
         True,
         (0, 0, 0)
     )
@@ -351,6 +364,10 @@ while running:
 
             running = False
 
+        # ------------------------------------------
+        # UAV MOVEMENT
+        # ------------------------------------------
+
         if event.type == MOVE_EVENT:
 
             for uav in uavs:
@@ -366,8 +383,6 @@ while running:
                     sector
                 )
 
-                # Share UAV's visited cells
-                # with the swarm coordinator.
                 coordinator.add_coverage_cells(
                     uav.visited_cells
                 )
@@ -376,6 +391,18 @@ while running:
                     disaster_map,
                     coordinator
                 )
+
+        # ------------------------------------------
+        # HAZARD EXPANSION
+        # ------------------------------------------
+
+        if event.type == HAZARD_EVENT:
+
+            disaster_map.expand_hazards()
+
+            print(
+                "[DISASTER] Hazards expanded."
+            )
 
 
     screen.fill(

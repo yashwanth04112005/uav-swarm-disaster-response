@@ -2,6 +2,7 @@ import random
 
 from environment.map import (
     OBSTACLE,
+    HAZARD,
     SURVIVOR
 )
 
@@ -60,11 +61,15 @@ class UAV:
             new_x = self.x + dx
             new_y = self.y + dy
 
+            # Stay inside assigned sector
             if not (
-                sector_start_x <= new_x <= sector_end_x
+                sector_start_x
+                <= new_x
+                <= sector_end_x
             ):
                 continue
 
+            # Stay inside map
             if not (
                 0 <= new_x < disaster_map.width
                 and
@@ -72,9 +77,12 @@ class UAV:
             ):
                 continue
 
-            if (
-                disaster_map.grid[new_y][new_x]
-                == OBSTACLE
+            cell = disaster_map.grid[new_y][new_x]
+
+            # Avoid obstacles and hazards
+            if cell in (
+                OBSTACLE,
+                HAZARD
             ):
                 continue
 
@@ -104,6 +112,7 @@ class UAV:
             )
 
         else:
+
             return
 
         self.x = chosen_x
@@ -128,6 +137,7 @@ class UAV:
             -self.sensor_range,
             self.sensor_range + 1
         ):
+
             for dx in range(
                 -self.sensor_range,
                 self.sensor_range + 1
@@ -163,5 +173,7 @@ class UAV:
                         )
 
                         print(
-                            f"[UAV {self.id}] Survivor detected at {location}"
+                            f"[UAV {self.id}] "
+                            f"Survivor detected at "
+                            f"{location}"
                         )
