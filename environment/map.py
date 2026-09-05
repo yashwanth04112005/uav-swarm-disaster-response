@@ -1,42 +1,70 @@
 import random
 
+
 EMPTY = 0
 OBSTACLE = 1
 HAZARD = 2
 SURVIVOR = 3
+RESCUED = 4
 
 
 class DisasterMap:
 
-    def __init__(self, width, height):
+    def __init__(
+        self,
+        width,
+        height
+    ):
 
         self.width = width
         self.height = height
 
         self.grid = [
-            [EMPTY for _ in range(width)]
+            [
+                EMPTY
+                for _ in range(width)
+            ]
             for _ in range(height)
         ]
 
+    # --------------------------------------------------
+    # GENERATE DISASTER ENVIRONMENT
+    # --------------------------------------------------
+
     def generate(self):
 
-        for y in range(self.height):
+        for y in range(
+            self.height
+        ):
 
-            for x in range(self.width):
+            for x in range(
+                self.width
+            ):
 
                 r = random.random()
 
                 if r < 0.10:
 
-                    self.grid[y][x] = OBSTACLE
+                    self.grid[y][x] = (
+                        OBSTACLE
+                    )
 
                 elif r < 0.15:
 
-                    self.grid[y][x] = HAZARD
+                    self.grid[y][x] = (
+                        HAZARD
+                    )
 
         self.place_survivors(5)
 
-    def place_survivors(self, count):
+    # --------------------------------------------------
+    # PLACE SURVIVORS
+    # --------------------------------------------------
+
+    def place_survivors(
+        self,
+        count
+    ):
 
         placed = 0
 
@@ -52,11 +80,50 @@ class DisasterMap:
                 self.height - 1
             )
 
-            if self.grid[y][x] == EMPTY:
+            if (
+                self.grid[y][x]
+                == EMPTY
+            ):
 
-                self.grid[y][x] = SURVIVOR
+                self.grid[y][x] = (
+                    SURVIVOR
+                )
 
                 placed += 1
+
+    # --------------------------------------------------
+    # RESCUE SURVIVOR
+    # --------------------------------------------------
+
+    def rescue_survivor(
+        self,
+        location
+    ):
+
+        x, y = location
+
+        if not (
+            0 <= x < self.width
+            and
+            0 <= y < self.height
+        ):
+
+            return False
+
+        if (
+            self.grid[y][x]
+            != SURVIVOR
+        ):
+
+            return False
+
+        self.grid[y][x] = RESCUED
+
+        return True
+
+    # --------------------------------------------------
+    # HAZARD EXPANSION
+    # --------------------------------------------------
 
     def expand_hazards(self):
 
@@ -69,11 +136,19 @@ class DisasterMap:
             (1, 0)
         ]
 
-        for y in range(self.height):
+        for y in range(
+            self.height
+        ):
 
-            for x in range(self.width):
+            for x in range(
+                self.width
+            ):
 
-                if self.grid[y][x] != HAZARD:
+                if (
+                    self.grid[y][x]
+                    != HAZARD
+                ):
+
                     continue
 
                 for dx, dy in directions:
@@ -86,19 +161,37 @@ class DisasterMap:
                         and
                         0 <= new_y < self.height
                     ):
+
                         continue
 
-                    if self.grid[new_y][new_x] != EMPTY:
+                    if (
+                        self.grid[new_y][new_x]
+                        != EMPTY
+                    ):
+
                         continue
 
-                    if random.random() < 0.30:
+                    if (
+                        random.random()
+                        < 0.30
+                    ):
 
-                        if (new_x, new_y) not in new_hazards:
+                        location = (
+                            new_x,
+                            new_y
+                        )
+
+                        if (
+                            location
+                            not in new_hazards
+                        ):
 
                             new_hazards.append(
-                                (new_x, new_y)
+                                location
                             )
 
         for x, y in new_hazards:
 
-            self.grid[y][x] = HAZARD
+            self.grid[y][x] = (
+                HAZARD
+            )
