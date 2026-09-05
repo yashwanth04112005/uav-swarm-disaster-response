@@ -861,6 +861,104 @@ def draw_survivor_markers():
 
 
 # ==================================================
+# MISSION STATE
+# ==================================================
+
+mission_complete = False
+
+
+# ==================================================
+# MISSION COMPLETE OVERLAY
+# ==================================================
+
+def draw_mission_complete():
+
+    overlay = pygame.Surface(
+
+        (
+            WINDOW_WIDTH,
+            WINDOW_HEIGHT
+        ),
+
+        pygame.SRCALPHA
+    )
+
+    overlay.fill(
+        (
+            0,
+            0,
+            0,
+            120
+        )
+    )
+
+    screen.blit(
+        overlay,
+        (0, 0)
+    )
+
+    big_font = pygame.font.SysFont(
+        None,
+        56
+    )
+
+    text = big_font.render(
+
+        "MISSION COMPLETE",
+
+        True,
+
+        (
+            0,
+            255,
+            100
+        )
+    )
+
+    text_rect = text.get_rect(
+        center=(
+            WINDOW_WIDTH // 2,
+            WINDOW_HEIGHT // 2
+        )
+    )
+
+    screen.blit(
+        text,
+        text_rect
+    )
+
+    rescued = len(
+        coordinator
+        .get_rescued_survivors()
+    )
+
+    sub_text = font.render(
+
+        f"All {rescued} survivors rescued",
+
+        True,
+
+        (
+            255,
+            255,
+            255
+        )
+    )
+
+    sub_rect = sub_text.get_rect(
+        center=(
+            WINDOW_WIDTH // 2,
+            WINDOW_HEIGHT // 2 + 40
+        )
+    )
+
+    screen.blit(
+        sub_text,
+        sub_rect
+    )
+
+
+# ==================================================
 # MAIN SIMULATION LOOP
 # ==================================================
 
@@ -930,6 +1028,8 @@ while running:
 
                     disaster_map,
 
+                    sector,
+
                     coordinator
                 )
 
@@ -952,6 +1052,41 @@ while running:
             print(
                 "[DISASTER] "
                 "Hazards expanded."
+            )
+
+    # ==================================================
+    # MISSION COMPLETION CHECK
+    # ==================================================
+
+    if not mission_complete:
+
+        # Count survivors still on the map
+        total_survivors = 0
+
+        for row in disaster_map.grid:
+
+            for cell in row:
+
+                if cell == SURVIVOR:
+
+                    total_survivors += 1
+
+        # All survivors rescued
+        if (
+            total_survivors == 0
+            and
+            len(
+                coordinator
+                .get_rescued_survivors()
+            ) > 0
+        ):
+
+            mission_complete = True
+
+            print(
+                "[MISSION] "
+                "All survivors rescued. "
+                "Mission complete!"
             )
 
 
@@ -996,6 +1131,11 @@ while running:
 
     # UAV-specific status
     draw_uav_status()
+
+    # Mission complete overlay
+    if mission_complete:
+
+        draw_mission_complete()
 
     pygame.display.flip()
 

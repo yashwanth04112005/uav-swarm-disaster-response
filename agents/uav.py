@@ -123,6 +123,23 @@ class UAV:
 
             next_position = self.path[0]
 
+            # Check if path is still safe
+            # (hazards may have expanded)
+            nx, ny = next_position
+
+            if (
+                0 <= nx < disaster_map.width
+                and
+                0 <= ny < disaster_map.height
+                and
+                disaster_map.grid[ny][nx]
+                in (OBSTACLE, HAZARD)
+            ):
+
+                self.path = []
+
+                return
+
             # Avoid another UAV
             if coordinator.is_position_occupied(
                 next_position,
@@ -187,6 +204,30 @@ class UAV:
             return
 
         # --------------------------------------------------
+        # RETURNING BUT PATH WAS CLEARED
+        #
+        # Re-plan the path to base instead of
+        # falling through to exploration.
+        # --------------------------------------------------
+
+        if (
+            self.status == "RETURNING"
+            and
+            self.get_position()
+            != self.base_position
+        ):
+
+            self.path = find_path(
+                disaster_map,
+                self.get_position(),
+                self.base_position,
+                sector
+            )
+
+            # If still no path, stay put
+            return
+
+        # --------------------------------------------------
         # TARGETED SURVIVOR
         # --------------------------------------------------
 
@@ -210,6 +251,10 @@ class UAV:
                 )
 
             else:
+
+                coordinator.clear_target(
+                    self.id
+                )
 
                 self.target = None
 
@@ -501,14 +546,6 @@ class UAV:
 
                     continue
 
-                # Avoid another UAV during exploration search
-                if coordinator.is_position_occupied(
-                    next_position,
-                    excluding_uav=self.id
-                ):
-
-                    continue
-
                 visited_search.add(
                     next_position
                 )
@@ -652,6 +689,7 @@ class UAV:
     def scan(
         self,
         disaster_map,
+        sector,
         coordinator
     ):
 
@@ -724,10 +762,28 @@ class UAV:
                 coordinator.get_survivors()
             )
 
-            if survivors:
+            # Filter out survivors already
+            # assigned to other UAVs
+            # AND survivors outside this
+            # UAV's sector (unreachable)
+            sector_start_x, sector_end_x = (
+                sector
+            )
+
+            available = [
+                s for s in survivors
+                if not
+                coordinator.is_target_assigned(s)
+                and
+                sector_start_x
+                <= s[0]
+                <= sector_end_x
+            ]
+
+            if available:
 
                 nearest = min(
-                    survivors,
+                    available,
                     key=lambda location:
                     abs(
                         location[0]
@@ -740,18 +796,22 @@ class UAV:
                     )
                 )
 
-                self.target = nearest
-
-                coordinator.assign_target(
-                    self.id,
-                    nearest
+                assigned = (
+                    coordinator.assign_target(
+                        self.id,
+                        nearest
+                    )
                 )
 
-                print(
-                    f"[UAV {self.id}] "
-                    f"Target assigned: "
-                    f"{nearest}"
-                )
+                if assigned:
+
+                    self.target = nearest
+
+                    print(
+                        f"[UAV {self.id}] "
+                        f"Target assigned: "
+                        f"{nearest}"
+                    )
 
     # --------------------------------------------------
     # RESCUE SURVIVOR
