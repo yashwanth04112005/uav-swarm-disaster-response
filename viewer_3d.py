@@ -64,40 +64,48 @@ class Viewer3D:
         self.thermal_mode = False
 
         # Color Palettes (Day Ops)
-        self.COLOR_BG = (238, 242, 248)
-        self.COLOR_GRID = (210, 216, 226)
-        self.COLOR_COVERAGE = (180, 220, 255)
+        self.COLOR_BG = (140, 185, 240)
+        self.COLOR_GRID = (195, 210, 225)
+        self.COLOR_COVERAGE = (160, 215, 255)
 
         self.BUILDING_FACES = (
-            (165, 172, 185),  # Top
-            (125, 132, 145),  # Left
-            (95, 102, 115)    # Right
+            (175, 183, 198),  # Top
+            (118, 128, 142),  # Left
+            (85, 94, 110)     # Right
         )
-        self.BUILDING_OUTLINE = (65, 70, 80)
+        self.BUILDING_OUTLINE = (55, 62, 76)
 
         self.COLOR_WINDOW_LIT = (245, 235, 170)
         self.COLOR_WINDOW_CYAN = (195, 230, 255)
         self.COLOR_WINDOW_DARK = (55, 62, 75)
 
         self.SECTOR_COLORS = [
-            (225, 238, 255),
-            (255, 230, 230),
-            (230, 255, 230),
-            (248, 230, 255),
-            (255, 246, 225)
+            (212, 228, 252),
+            (252, 220, 220),
+            (220, 248, 220),
+            (240, 220, 252),
+            (252, 238, 210)
         ]
 
         # Thermal Ops Palette
-        self.THERMAL_BG = (12, 16, 24)
-        self.THERMAL_GRID = (28, 42, 58)
-        self.THERMAL_FLOOR = (18, 24, 34)
-        self.THERMAL_COVERAGE = (30, 75, 110)
+        self.THERMAL_BG = (8, 12, 20)
+        self.THERMAL_GRID = (22, 36, 52)
+        self.THERMAL_FLOOR = (14, 20, 30)
+        self.THERMAL_COVERAGE = (25, 65, 100)
         self.THERMAL_BUILDING_FACES = (
-            (48, 62, 85),
-            (32, 42, 60),
-            (22, 30, 44)
+            (44, 58, 80),
+            (28, 38, 56),
+            (18, 26, 40)
         )
-        self.THERMAL_BUILDING_OUTLINE = (55, 75, 105)
+        self.THERMAL_BUILDING_OUTLINE = (50, 70, 100)
+
+        # Pre-baked sky gradient surface (drawn once, cached)
+        self._sky_surface = None
+        self._sky_thermal_surface = None
+        self._sky_size = (window_width, window_height)
+
+        # Ember particle system: list of [x, y, vx, vy, life, max_life, r, g, b]
+        self._embers = []
 
         self.font = pygame.font.SysFont(None, 20)
         self.bold_font = pygame.font.SysFont(None, 22, bold=True)
@@ -116,6 +124,134 @@ class Viewer3D:
 
     def toggle_thermal_mode(self):
         self.thermal_mode = not self.thermal_mode
+
+    # --------------------------------------------------
+    # SKY GRADIENT BACKGROUND
+    # --------------------------------------------------
+
+    def _build_sky_surface(self, w, h, thermal=False):
+        """Pre-bake a vertical sky gradient surface."""
+        surf = pygame.Surface((w, h))
+        for row in range(h):
+            t = row / max(1, h - 1)
+            if thermal:
+                # Deep FLIR blue-black at top -> dark teal at horizon
+                r = int(6 + t * 14)
+                g = int(10 + t * 20)
+                b = int(18 + t * 26)
+            else:
+                # Cerulean sky at top -> warm hazy horizon
+                r = int(80 + t * 105)
+                g = int(140 + t * 62)
+                b = int(215 + t * 28)
+            surf.fill((r, g, b), (0, row, w, 1))
+        return surf
+
+    def draw_sky(self, surface):
+        """Draw cached sky gradient; rebuilds if thermal mode changed."""
+        w, h = self._sky_size
+        if self.thermal_mode:
+            if self._sky_thermal_surface is None:
+                self._sky_thermal_surface = self._build_sky_surface(w, h, thermal=True)
+            surface.blit(self._sky_thermal_surface, (0, 0))
+        else:
+            if self._sky_surface is None:
+                self._sky_surface = self._build_sky_surface(w, h, thermal=False)
+            surface.blit(self._sky_surface, (0, 0))
+
+    # --------------------------------------------------
+    # DEPTH FOG HELPER
+    # --------------------------------------------------
+
+    def _fog_blend(self, color, dist_t, thermal=False):
+        """Blend a tile colour toward the sky/horizon colour with distance."""
+        fog_t = min(1.0, dist_t * 0.55)   # max 55% fog at map edge
+        if thermal:
+            fog_r, fog_g, fog_b = 14, 26, 38
+        else:
+            fog_r, fog_g, fog_b = 185, 210, 240  # hazy horizon colour
+        r = int(color[0] * (1 - fog_t) + fog_r * fog_t)
+        g = int(color[1] * (1 - fog_t) + fog_g * fog_t)
+        b = int(color[2] * (1 - fog_t) + fog_b * fog_t)
+        return (r, g, b)
+
+    # --------------------------------------------------
+    # EMBER PARTICLE SYSTEM
+    # --------------------------------------------------
+
+    def _spawn_embers(self, screen_x, screen_y):
+        """Probabilistically spawn fire embers at a hazard cell."""
+        import random
+        if random.random() < 0.25:   # 25% chance each render frame
+            life = random.randint(28, 55)
+            vx = random.uniform(-0.6, 0.6)
+            vy = random.uniform(-1.5, -0.6)
+            # Ember colour: bright orange/yellow to red
+            r = random.randint(220, 255)
+            g = random.randint(60, 160)
+            b = random.randint(0, 20)
+            self._embers.append([screen_x, screen_y, vx, vy, life, life, r, g, b])
+
+    def _update_and_draw_embers(self, surface):
+        """Advance ember physics and draw surviving particles."""
+        alive = []
+        for em in self._embers:
+            em[0] += em[2]           # x drift
+            em[1] += em[3]           # y rise
+            em[3] *= 0.97            # slow rise over time
+            em[2] += 0.02 * (0.5 - (hash(id(em)) % 100) / 100.0)  # wobble
+            em[4] -= 1               # age
+            if em[4] > 0:
+                t = em[4] / em[5]
+                alpha = int(t * 230)
+                radius = max(1, int(t * 2.5))
+                em_surf = pygame.Surface((radius * 2 + 2, radius * 2 + 2), pygame.SRCALPHA)
+                pygame.draw.circle(em_surf, (em[6], em[7], em[8], alpha),
+                                   (radius + 1, radius + 1), radius)
+                surface.blit(em_surf, (int(em[0]) - radius - 1, int(em[1]) - radius - 1))
+                alive.append(em)
+        # Cap particle count to avoid slowdown
+        self._embers = alive[-300:]
+
+    # --------------------------------------------------
+    # SOS VERTICAL LIGHT BEAM
+    # --------------------------------------------------
+
+    def draw_sos_beam(self, surface, cx, cy):
+        """Draw a vertical SOS light column rising from a survivor."""
+        beam_h = 80
+        num_layers = 6
+        t_ms = pygame.time.get_ticks()
+        # Pulse the beam intensity slowly
+        pulse = 0.55 + 0.45 * math.sin(t_ms * 0.004)
+        beam_surf = pygame.Surface((18, beam_h), pygame.SRCALPHA)
+        for i in range(num_layers):
+            layer_t = i / num_layers          # 0=top, 1=bottom
+            alpha = int(pulse * (1.0 - layer_t) * 80)
+            stripe_h = beam_h // num_layers
+            color = (255, 240, 80, alpha) if not self.thermal_mode else (140, 255, 210, alpha)
+            pygame.draw.rect(beam_surf, color, (0, i * stripe_h, 18, stripe_h + 1))
+        surface.blit(beam_surf, (cx - 9, cy - beam_h))
+
+    # --------------------------------------------------
+    # ROTOR DOWNWASH GROUND EFFECT
+    # --------------------------------------------------
+
+    def draw_rotor_downwash(self, surface, gx, gy, altitude_z):
+        """Faint expanding ring on ground below a flying drone."""
+        if altitude_z < 0.3:
+            return
+        t_ms = pygame.time.get_ticks()
+        # Two counter-phase rings so it looks like air pulses
+        for phase_offset in (0, 500):
+            ring_t = ((t_ms + phase_offset) % 700) / 700.0
+            ring_r_x = int(self.tile_width * 0.55 * (0.4 + ring_t * 0.6))
+            ring_r_y = max(3, ring_r_x // 2)
+            alpha = int((1.0 - ring_t) * 55)
+            dw_surf = pygame.Surface((ring_r_x * 2 + 2, ring_r_y * 2 + 2), pygame.SRCALPHA)
+            col = (120, 200, 255, alpha) if self.thermal_mode else (180, 200, 220, alpha)
+            pygame.draw.ellipse(dw_surf, col, (1, 1, ring_r_x * 2, ring_r_y * 2), 1)
+            surface.blit(dw_surf, (gx - ring_r_x - 1, gy - ring_r_y - 1))
 
     # --------------------------------------------------
     # COORDINATE TRANSFORMATION
@@ -168,7 +304,7 @@ class Viewer3D:
     # --------------------------------------------------
 
     def draw_architectural_building(self, surface, x, y, z, disaster_map):
-        """Draws realistic building voxel with office windows and rooftop details."""
+        """Draws realistic building voxel with office windows, AO edges, and rooftop details."""
         top_cx, top_cy = self.project(x, y, z)
         htw = self.tile_width // 2
         hth = self.tile_height // 2
@@ -177,7 +313,15 @@ class Viewer3D:
         faces = self.THERMAL_BUILDING_FACES if self.thermal_mode else self.BUILDING_FACES
         outline = self.THERMAL_BUILDING_OUTLINE if self.thermal_mode else self.BUILDING_OUTLINE
 
-        # 1. Base Concrete Faces
+        # Depth fog factor: further from camera = more fog
+        rx, ry = self.rotate_coords(x, y)
+        max_dist = self.grid_width + self.grid_height
+        dist_t = (rx + ry) / max(1, max_dist)
+
+        def fog(c):
+            return self._fog_blend(c, dist_t, self.thermal_mode)
+
+        # 1. Base Concrete Faces with fog
         top_pts = [
             (top_cx, top_cy - hth),
             (top_cx + htw, top_cy),
@@ -197,9 +341,30 @@ class Viewer3D:
             (top_cx, top_cy + hth + lh)
         ]
 
-        pygame.draw.polygon(surface, faces[0], top_pts)
-        pygame.draw.polygon(surface, faces[1], left_pts)
-        pygame.draw.polygon(surface, faces[2], right_pts)
+        pygame.draw.polygon(surface, fog(faces[0]), top_pts)
+        pygame.draw.polygon(surface, fog(faces[1]), left_pts)
+        pygame.draw.polygon(surface, fog(faces[2]), right_pts)
+
+        # 1b. Ambient Occlusion: dark strip at base of left & right faces (fast solid-colour)
+        ao_dark = (18, 20, 28) if self.thermal_mode else (38, 42, 54)
+        ao_pts_left = [
+            (top_cx - htw, top_cy + lh - 4),
+            (top_cx, top_cy + hth + lh - 4),
+            (top_cx, top_cy + hth + lh),
+            (top_cx - htw, top_cy + lh)
+        ]
+        ao_pts_right = [
+            (top_cx, top_cy + hth + lh - 4),
+            (top_cx + htw, top_cy + lh - 4),
+            (top_cx + htw, top_cy + lh),
+            (top_cx, top_cy + hth + lh)
+        ]
+        pygame.draw.polygon(surface, ao_dark, ao_pts_left)
+        pygame.draw.polygon(surface, ao_dark, ao_pts_right)
+
+        # 1c. AO inner crease line at corner edge
+        crease_col = (35, 38, 48) if self.thermal_mode else (55, 60, 72)
+        pygame.draw.line(surface, crease_col, (top_cx, top_cy + hth), (top_cx, top_cy + hth + lh), 1)
 
         # 2. Window Lattices on Left and Right Facades
         win_w = max(2, htw // 4)
@@ -531,15 +696,18 @@ class Viewer3D:
 
     def render(self, screen, disaster_map, coordinator, uavs):
         """Renders the entire 3D simulation with visual interpolation and depth sorting."""
-        bg_col = self.THERMAL_BG if self.thermal_mode else self.COLOR_BG
-        screen.fill(bg_col)
 
-        # 1. Ground Floor Diamonds
+        # 0. Sky gradient background (replaces flat fill)
+        self.draw_sky(screen)
+
+        # 1. Ground Floor Diamonds with depth fog
         coverage_set = coordinator.get_coverage()
         sectors = coordinator.sectors
 
         grid_col = self.THERMAL_GRID if self.thermal_mode else self.COLOR_GRID
         cov_col = self.THERMAL_COVERAGE if self.thermal_mode else self.COLOR_COVERAGE
+
+        max_dist = self.grid_width + self.grid_height
 
         for y in range(self.grid_height):
             for x in range(self.grid_width):
@@ -559,7 +727,13 @@ class Viewer3D:
                 if (x, y) in coverage_set:
                     floor_color = cov_col
 
-                self.draw_diamond(screen, cx, cy, floor_color, grid_col)
+                # Apply depth fog to ground tiles
+                rx, ry = self.rotate_coords(x, y)
+                dist_t = (rx + ry) / max(1, max_dist)
+                floor_color = self._fog_blend(floor_color, dist_t, self.thermal_mode)
+                grid_fogged = self._fog_blend(grid_col, dist_t, self.thermal_mode)
+
+                self.draw_diamond(screen, cx, cy, floor_color, grid_fogged)
 
         # 2. Update Smooth Visual Flight Positions (60 FPS Interpolation)
         lerp_speed = 0.22
@@ -625,11 +799,16 @@ class Viewer3D:
 
             elif item_type == "HAZARD":
                 x, y, z = data
+                cx_h, cy_h = self.project(x, y, z)
                 self.draw_volumetric_hazard(screen, x, y, z)
+                # Spawn embers from this fire cell
+                self._spawn_embers(cx_h, cy_h)
 
             elif item_type == "SURVIVOR":
                 x, y, z = data
                 cx, cy = self.project(x, y, z)
+                # Draw SOS vertical light beam
+                self.draw_sos_beam(screen, cx, cy)
                 self.draw_survivor_beacon(screen, cx, cy, is_rescued=False)
 
             elif item_type == "RESCUED":
@@ -653,6 +832,9 @@ class Viewer3D:
                 pygame.draw.ellipse(shadow_surf, shadow_col, (0, 0, shadow_w, shadow_h))
                 screen.blit(shadow_surf, (gx - shadow_w // 2, gy - shadow_h // 2))
 
+                # Rotor downwash ground effect ring
+                self.draw_rotor_downwash(screen, gx, gy, vz)
+
                 # Vertical Altitude Drop-Line
                 ux, uy = self.project(vx, vy, vz)
                 if vz > 0.05:
@@ -662,7 +844,10 @@ class Viewer3D:
                 # Procedural 3D Quadcopter at smooth visual coordinates
                 self.draw_quadcopter(screen, uav, ux, uy, gx, gy)
 
-        # 6. Top Controls & Camera Banner
+        # 6. Ember Particle Layer (on top of buildings/hazards, under HUD)
+        self._update_and_draw_embers(screen)
+
+        # 7. Top Controls & Camera Banner
         view_str = f"Camera: {self.view_names[self.view_angle]}"
         if self.thermal_mode:
             view_str += "  |  [MODE: FLIR THERMAL NIGHT]"
