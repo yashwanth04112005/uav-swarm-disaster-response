@@ -20,6 +20,14 @@ class SwarmCoordinator:
             self.num_uavs = num_uavs
 
         # ==================================================
+        # TIME & PERFORMANCE ANALYTICS
+        # ==================================================
+
+        self.current_tick = 0
+        self.survivor_detection_ticks = {}
+        self.survivor_rescue_ticks = {}
+
+        # ==================================================
         # SHARED INFORMATION
         # ==================================================
 
@@ -89,10 +97,10 @@ class SwarmCoordinator:
         ]
 
     # ==================================================
-    # SURVIVOR MANAGEMENT
+    # SURVIVOR MANAGEMENT & ANALYTICS
     # ==================================================
 
-    def add_survivor(self, location):
+    def add_survivor(self, location, tick=None):
 
         if location in self.rescued_survivors:
             return
@@ -101,11 +109,15 @@ class SwarmCoordinator:
             location
         )
 
+        if location not in self.survivor_detection_ticks:
+            t = self.current_tick if tick is None else tick
+            self.survivor_detection_ticks[location] = t
+
     def get_survivors(self):
 
         return self.shared_survivors
 
-    def rescue_survivor(self, location):
+    def rescue_survivor(self, location, tick=None):
 
         self.rescued_survivors.add(
             location
@@ -114,6 +126,9 @@ class SwarmCoordinator:
         self.shared_survivors.discard(
             location
         )
+
+        t = self.current_tick if tick is None else tick
+        self.survivor_rescue_ticks[location] = t
 
         # Remove any assignment for this survivor
         for uav_id, target in list(
@@ -130,8 +145,20 @@ class SwarmCoordinator:
 
         return self.rescued_survivors
 
+    def get_mean_time_to_rescue(self):
+        """Returns average ticks from detection to rescue."""
+        if not self.survivor_rescue_ticks:
+            return 0.0
+
+        durations = []
+        for loc, r_tick in self.survivor_rescue_ticks.items():
+            d_tick = self.survivor_detection_ticks.get(loc, 0)
+            durations.append(max(0, r_tick - d_tick))
+
+        return sum(durations) / len(durations) if durations else 0.0
+
     # ==================================================
-    # TARGET ASSIGNMENT
+    # TARGET ASSIGNMENT & CROSS-SECTOR ASSISTANCE
     # ==================================================
 
     def assign_target(
@@ -163,6 +190,37 @@ class SwarmCoordinator:
         ] = target
 
         return True
+
+    def request_cross_sector_target(self, uav_id, uav_pos):
+        """
+        Cross-Sector Mutual Assistance:
+        If a UAV has no targets in its own sector, find the nearest
+        unassigned survivor in any sector across the map.
+        """
+        available = [
+            s for s in self.shared_survivors
+            if not self.is_target_assigned(s)
+            and s not in self.rescued_survivors
+        ]
+
+        if not available:
+            return None
+
+        # Find closest survivor across all sectors
+        nearest = min(
+            available,
+            key=lambda loc: (
+                abs(loc[0] - uav_pos[0]) +
+                abs(loc[1] - uav_pos[1]) +
+                abs(loc[2] - uav_pos[2])
+            )
+        )
+
+        if self.assign_target(uav_id, nearest):
+            print(f"[MUTUAL ASSISTANCE] UAV {uav_id} dispatched across sectors to target {nearest}!")
+            return nearest
+
+        return None
 
     def get_assigned_target(
         self,

@@ -57,6 +57,7 @@ clock = pygame.time.Clock()
 font = pygame.font.SysFont(None, 20 if WINDOW_WIDTH < 1000 else 22)
 small_font = pygame.font.SysFont(None, 17 if WINDOW_WIDTH < 1000 else 19)
 bold_font = pygame.font.SysFont(None, 22 if WINDOW_WIDTH < 1000 else 24, bold=True)
+big_font = pygame.font.SysFont(None, 30 if WINDOW_WIDTH < 1000 else 36, bold=True)
 
 
 # ==================================================
@@ -93,6 +94,7 @@ disaster_map = None
 coordinator = None
 uavs = []
 mission_complete = False
+show_scorecard = False
 paused = False
 
 
@@ -111,7 +113,7 @@ def get_random_empty_cell_in_sector(dmap, start_x, end_x):
 
 
 def reset_simulation():
-    global disaster_map, coordinator, uavs, mission_complete
+    global disaster_map, coordinator, uavs, mission_complete, show_scorecard
 
     disaster_map = DisasterMap(
         GRID_WIDTH,
@@ -152,6 +154,7 @@ def reset_simulation():
         coordinator.add_coverage(uav.get_position())
 
     mission_complete = False
+    show_scorecard = False
     print("[SIMULATION] Environment & Swarm regenerated.")
 
 
@@ -214,7 +217,7 @@ def draw_hud():
     panel_w = 230 if WINDOW_WIDTH < 1000 else 255
     panel_x = WINDOW_WIDTH - panel_w - 15
     panel_y = 15
-    panel_h = 350 if WINDOW_HEIGHT < 700 else 380
+    panel_h = 360 if WINDOW_HEIGHT < 700 else 390
 
     # Modern dark translucent panel
     hud_surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
@@ -284,12 +287,17 @@ def draw_hud():
         screen.blit(txt, (panel_x + 14, curr_y))
         curr_y += 20
 
+    if mission_complete:
+        curr_y += 4
+        m_txt = small_font.render("[Tab] Toggle Debrief Card", True, (50, 255, 130))
+        screen.blit(m_txt, (panel_x + 14, curr_y))
+
 
 # ==================================================
-# MISSION COMPLETE OVERLAY
+# MISSION DEBRIEF & EFFICIENCY SCORECARD
 # ==================================================
 
-def draw_mission_complete():
+def draw_mission_debrief():
 
     overlay = pygame.Surface(
         (
@@ -301,10 +309,10 @@ def draw_mission_complete():
 
     overlay.fill(
         (
-            10,
-            15,
-            25,
-            160
+            8,
+            12,
+            20,
+            205
         )
     )
 
@@ -313,208 +321,242 @@ def draw_mission_complete():
         (0, 0)
     )
 
-    big_font = pygame.font.SysFont(
-        None,
-        54,
-        bold=True
-    )
+    card_w = min(560, WINDOW_WIDTH - 60)
+    card_h = min(470, WINDOW_HEIGHT - 60)
+    card_x = (WINDOW_WIDTH - card_w) // 2
+    card_y = (WINDOW_HEIGHT - card_h) // 2
 
-    text = big_font.render(
-        "MISSION COMPLETE",
-        True,
-        (
-            50,
-            255,
-            130
-        )
-    )
+    # Tactical Debrief Card Surface
+    card_surf = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
+    pygame.draw.rect(card_surf, (16, 22, 34, 250), (0, 0, card_w, card_h), border_radius=12)
+    pygame.draw.rect(card_surf, (50, 215, 130, 230), (0, 0, card_w, card_h), width=2, border_radius=12)
+    screen.blit(card_surf, (card_x, card_y))
 
-    text_rect = text.get_rect(
-        center=(
-            WINDOW_WIDTH // 2 - 80,
-            WINDOW_HEIGHT // 2 - 20
-        )
-    )
+    # Header Title
+    title = big_font.render("MISSION DEBRIEF & SCORECARD", True, (50, 255, 130))
+    screen.blit(title, (card_x + (card_w - title.get_width()) // 2, card_y + 16))
 
-    screen.blit(
-        text,
-        text_rect
-    )
+    rescued = len(coordinator.get_rescued_survivors())
+    cov_pct = coordinator.get_coverage_percentage()
+    mttr = coordinator.get_mean_time_to_rescue()
+    total_dist = sum(u.total_distance for u in uavs)
+    total_energy = sum(u.total_energy_consumed for u in uavs)
+    total_recharges = sum(u.recharge_count for u in uavs)
 
-    rescued = len(
-        coordinator.get_rescued_survivors()
-    )
+    # Performance Evaluation Grade
+    if cov_pct >= 60:
+        grade = "GRADE S (OPTIMAL COORDINATION)"
+        grade_col = (50, 255, 130)
+    elif cov_pct >= 40:
+        grade = "GRADE A (EXCELLENT PERFORMANCE)"
+        grade_col = (100, 220, 255)
+    else:
+        grade = "GRADE B (SUCCESSFUL RESCUE)"
+        grade_col = (255, 200, 60)
 
-    sub_text = bold_font.render(
-        f"All {rescued} survivors safely rescued via 3D airspace coordination!",
-        True,
-        (
-            240,
-            245,
-            255
-        )
-    )
+    sub_txt = font.render(f"Fleet Evaluation: {grade}", True, grade_col)
+    screen.blit(sub_txt, (card_x + (card_w - sub_txt.get_width()) // 2, card_y + 54))
 
-    sub_rect = sub_text.get_rect(
-        center=(
-            WINDOW_WIDTH // 2 - 80,
-            WINDOW_HEIGHT // 2 + 25
-        )
-    )
+    # 4 Key Summary Metric Badges (2x2 Grid)
+    metrics_data = [
+        ("Survivors Rescued", f"{rescued} / {rescued} (100%)", (80, 240, 120)),
+        ("Mean Time to Rescue (MTTR)", f"{mttr:.1f} ticks", (255, 215, 60)),
+        ("Total 3D Flight Distance", f"{total_dist} voxels", (160, 210, 255)),
+        ("Energy & Recharge Cycles", f"{total_energy} steps | {total_recharges} charges", (255, 140, 200))
+    ]
 
-    screen.blit(
-        sub_text,
-        sub_rect
-    )
+    grid_w = (card_w - 50) // 2
+    grid_h = 50
+    for idx, (label, val, col) in enumerate(metrics_data):
+        gx = card_x + 20 + (idx % 2) * (grid_w + 10)
+        gy = card_y + 86 + (idx // 2) * (grid_h + 8)
 
-    hint_text = small_font.render("Press [R] to regenerate new city and mission", True, (160, 200, 240))
-    screen.blit(hint_text, (WINDOW_WIDTH // 2 - 80 - hint_text.get_width() // 2, WINDOW_HEIGHT // 2 + 65))
+        m_surf = pygame.Surface((grid_w, grid_h), pygame.SRCALPHA)
+        pygame.draw.rect(m_surf, (26, 34, 48, 220), (0, 0, grid_w, grid_h), border_radius=6)
+        screen.blit(m_surf, (gx, gy))
+
+        lbl = small_font.render(label, True, (160, 175, 195))
+        val_txt = bold_font.render(val, True, col)
+        screen.blit(lbl, (gx + 10, gy + 5))
+        screen.blit(val_txt, (gx + 10, gy + 24))
+
+    # Fleet Telemetry Table
+    tbl_y = card_y + 215
+    tbl_header = bold_font.render("FLEET TELEMETRY BREAKDOWN", True, (210, 225, 245))
+    screen.blit(tbl_header, (card_x + 20, tbl_y))
+
+    col_hdr = small_font.render("Drone ID         Distance         Rescues         Charges         Battery", True, (130, 150, 175))
+    screen.blit(col_hdr, (card_x + 20, tbl_y + 24))
+
+    pygame.draw.line(screen, (45, 60, 80), (card_x + 20, tbl_y + 42), (card_x + card_w - 20, tbl_y + 42), 1)
+
+    row_y = tbl_y + 48
+    for uav in uavs:
+        row_str = f"UAV {uav.id}               {uav.total_distance:4d}              {uav.rescued_count:2d}               {uav.recharge_count:2d}              {uav.battery:3d}%"
+        row_txt = small_font.render(row_str, True, uav.color)
+        screen.blit(row_txt, (card_x + 20, row_y))
+        row_y += 19
+
+    # Footer Action Prompt
+    footer_str = "Press [R] New Mission  |  [Tab] Toggle Scorecard  |  [T] Thermal View"
+    footer_txt = small_font.render(footer_str, True, (140, 190, 240))
+    screen.blit(footer_txt, (card_x + (card_w - footer_txt.get_width()) // 2, card_y + card_h - 24))
 
 
 # ==================================================
 # MAIN SIMULATION LOOP
 # ==================================================
 
-running = True
+def run_simulation():
+    global running, paused, mission_complete, show_scorecard
 
-while running:
+    running = True
 
-    # ==================================================
-    # EVENT HANDLING
-    # ==================================================
+    while running:
 
-    for event in pygame.event.get():
+        # ==================================================
+        # EVENT HANDLING
+        # ==================================================
 
-        # Quit
-        if event.type == pygame.QUIT:
-            running = False
+        for event in pygame.event.get():
 
-        # Keyboard Controls
-        elif event.type == pygame.KEYDOWN:
+            # Quit
+            if event.type == pygame.QUIT:
+                running = False
 
-            # Camera 90-degree rotations
-            if event.key in (pygame.K_LEFT, pygame.K_a):
-                viewer.rotate_counter_clockwise()
+            # Keyboard Controls
+            elif event.type == pygame.KEYDOWN:
 
-            elif event.key in (pygame.K_RIGHT, pygame.K_d):
-                viewer.rotate_clockwise()
+                # Camera 90-degree rotations
+                if event.key in (pygame.K_LEFT, pygame.K_a):
+                    viewer.rotate_counter_clockwise()
 
-            # Pause / Resume
-            elif event.key == pygame.K_SPACE:
-                paused = not paused
+                elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                    viewer.rotate_clockwise()
 
-            # Thermal / Night Vision Mode
-            elif event.key == pygame.K_t:
-                viewer.toggle_thermal_mode()
+                # Pause / Resume
+                elif event.key == pygame.K_SPACE:
+                    paused = not paused
 
-            # Regenerate & Restart Simulation
-            elif event.key == pygame.K_r:
-                reset_simulation()
+                # Thermal / Night Vision Mode
+                elif event.key == pygame.K_t:
+                    viewer.toggle_thermal_mode()
 
-            # Speed Adjustments (+ / - or UP / DOWN)
-            elif event.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_UP):
-                apply_speed(current_speed_idx + 1)
+                # Regenerate & Restart Simulation
+                elif event.key == pygame.K_r:
+                    reset_simulation()
 
-            elif event.key in (pygame.K_MINUS, pygame.K_UNDERSCORE, pygame.K_DOWN):
-                apply_speed(current_speed_idx - 1)
+                # Toggle Debrief Scorecard
+                elif event.key == pygame.K_TAB:
+                    show_scorecard = not show_scorecard
 
-        # UAV Movement
-        elif event.type == MOVE_EVENT:
+                # Speed Adjustments (+ / - or UP / DOWN)
+                elif event.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_UP):
+                    apply_speed(current_speed_idx + 1)
 
-            if not paused:
+                elif event.key in (pygame.K_MINUS, pygame.K_UNDERSCORE, pygame.K_DOWN):
+                    apply_speed(current_speed_idx - 1)
 
-                for uav in uavs:
+            # UAV Movement
+            elif event.type == MOVE_EVENT:
 
-                    if uav.status == "DEAD":
-                        continue
+                if not paused:
 
-                    sector = coordinator.get_sector(uav.id)
+                    coordinator.current_tick += 1
 
-                    # Move UAV (3D A* and altitude sweep)
-                    uav.move(
-                        disaster_map,
-                        sector,
-                        coordinator
-                    )
+                    for uav in uavs:
 
-                    # Update position
-                    coordinator.update_uav_position(
-                        uav.id,
-                        uav.get_position()
-                    )
+                        if uav.status == "DEAD":
+                            continue
 
-                    # Update coverage (ground footprint)
-                    coordinator.add_coverage_cells(
-                        uav.visited_cells
-                    )
+                        sector = coordinator.get_sector(uav.id)
 
-                    # 3D sensor scan
-                    uav.scan(
-                        disaster_map,
-                        sector,
-                        coordinator
-                    )
+                        # Move UAV (3D A* and altitude sweep)
+                        uav.move(
+                            disaster_map,
+                            sector,
+                            coordinator
+                        )
 
-                    # Attempt rescue if target reached
-                    uav.attempt_rescue(
-                        disaster_map,
-                        coordinator
-                    )
+                        # Update position
+                        coordinator.update_uav_position(
+                            uav.id,
+                            uav.get_position()
+                        )
 
-        # Hazard Expansion
-        elif event.type == HAZARD_EVENT:
+                        # Update coverage (ground footprint)
+                        coordinator.add_coverage_cells(
+                            uav.visited_cells
+                        )
 
-            if not paused:
-                disaster_map.expand_hazards()
-                print("[DISASTER] Hazards expanded in 3D.")
+                        # 3D sensor scan
+                        uav.scan(
+                            disaster_map,
+                            sector,
+                            coordinator
+                        )
 
-    # ==================================================
-    # MISSION COMPLETION CHECK (3D VOXEL SCAN)
-    # ==================================================
+                        # Attempt rescue if target reached
+                        uav.attempt_rescue(
+                            disaster_map,
+                            coordinator
+                        )
 
-    if not mission_complete:
+            # Hazard Expansion
+            elif event.type == HAZARD_EVENT:
 
-        active_survivors = sum(
-            1 for z in range(disaster_map.depth)
-            for y in range(disaster_map.height)
-            for x in range(disaster_map.width)
-            if disaster_map.grid[z][y][x] == SURVIVOR
-        )
+                if not paused:
+                    disaster_map.expand_hazards()
+                    print("[DISASTER] Hazards expanded in 3D.")
 
-        if (
-            active_survivors == 0
-            and
-            len(coordinator.get_rescued_survivors()) > 0
-        ):
+        # ==================================================
+        # MISSION COMPLETION CHECK (3D VOXEL SCAN)
+        # ==================================================
 
-            mission_complete = True
-            print(
-                "[MISSION] All survivors rescued. Mission complete!"
+        if not mission_complete:
+
+            active_survivors = sum(
+                1 for z in range(disaster_map.depth)
+                for y in range(disaster_map.height)
+                for x in range(disaster_map.width)
+                if disaster_map.grid[z][y][x] == SURVIVOR
             )
 
-    # ==================================================
-    # RENDER 3D SCENE & HUD
-    # ==================================================
+            if (
+                active_survivors == 0
+                and
+                len(coordinator.get_rescued_survivors()) > 0
+            ):
 
-    viewer.render(
-        screen,
-        disaster_map,
-        coordinator,
-        uavs
-    )
+                mission_complete = True
+                show_scorecard = True
+                print(
+                    "[MISSION] All survivors rescued. Mission complete!"
+                )
 
-    draw_hud()
+        # ==================================================
+        # RENDER 3D SCENE & HUD
+        # ==================================================
 
-    if mission_complete:
-        draw_mission_complete()
+        viewer.render(
+            screen,
+            disaster_map,
+            coordinator,
+            uavs
+        )
 
-    pygame.display.flip()
+        draw_hud()
 
-    clock.tick(60)
+        if mission_complete and show_scorecard:
+            draw_mission_debrief()
+
+        pygame.display.flip()
+
+        clock.tick(60)
+
+    # Shutdown
+    pygame.quit()
 
 
-# ==================================================
-# SHUTDOWN
-# ==================================================
-
-pygame.quit()
+if __name__ == "__main__":
+    run_simulation()

@@ -66,6 +66,11 @@ class UAV:
         self.status = "EXPLORING"
         self.rescued_count = 0
 
+        # Performance & Flight Telemetry
+        self.total_distance = 0
+        self.total_energy_consumed = 0
+        self.recharge_count = 0
+
     # --------------------------------------------------
     # POSITION
     # --------------------------------------------------
@@ -118,11 +123,13 @@ class UAV:
                 coordinator.clear_target(self.id)
                 self.target = None
 
+            sector_start_x, sector_end_x = sector
+            ret_sector = (0, disaster_map.width - 1) if (self.x < sector_start_x or self.x > sector_end_x) else sector
             self.path = find_path(
                 disaster_map,
                 self.get_position(),
                 self.base_position,
-                sector
+                ret_sector
             )
 
             self.status = "RETURNING"
@@ -165,6 +172,8 @@ class UAV:
                 0,
                 self.battery - 1
             )
+            self.total_distance += 1
+            self.total_energy_consumed += 1
 
             coordinator.update_uav_position(
                 self.id,
@@ -183,6 +192,7 @@ class UAV:
             self.get_position() == self.base_position
         ):
 
+            self.recharge_count += 1
             self.status = "CHARGING"
 
         # --------------------------------------------------
@@ -215,11 +225,13 @@ class UAV:
             self.get_position() != self.base_position
         ):
 
+            sector_start_x, sector_end_x = sector
+            ret_sector = (0, disaster_map.width - 1) if (self.x < sector_start_x or self.x > sector_end_x) else sector
             self.path = find_path(
                 disaster_map,
                 self.get_position(),
                 self.base_position,
-                sector
+                ret_sector
             )
 
             # If still no path, stay put
@@ -231,11 +243,18 @@ class UAV:
 
         if self.target:
 
+            sector_start_x, sector_end_x = sector
+            target_x = self.target[0]
+            if not (sector_start_x <= target_x <= sector_end_x) or not (sector_start_x <= self.x <= sector_end_x):
+                effective_sector = (0, disaster_map.width - 1)
+            else:
+                effective_sector = sector
+
             self.path = find_path(
                 disaster_map,
                 self.get_position(),
                 self.target,
-                sector
+                effective_sector
             )
 
             if self.path:
@@ -720,6 +739,19 @@ class UAV:
                         f"{nearest}"
                     )
 
+            elif self.status in ("EXPLORING", "EXPLORATION_COMPLETE"):
+
+                # Mutual Assistance: Request unassigned survivor across any sector
+                cross_target = coordinator.request_cross_sector_target(
+                    self.id,
+                    self.get_position()
+                )
+
+                if cross_target:
+
+                    self.target = cross_target
+                    self.status = "EXPLORING"
+
     # --------------------------------------------------
     # RESCUE SURVIVOR
     # --------------------------------------------------
@@ -742,7 +774,10 @@ class UAV:
 
         if disaster_map.rescue_survivor(target):
 
-            coordinator.rescue_survivor(target)
+            coordinator.rescue_survivor(
+                target,
+                getattr(coordinator, "current_tick", 0)
+            )
 
             self.rescued_count += 1
 
