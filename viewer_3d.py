@@ -1,7 +1,9 @@
 """
 Isometric 3D Viewer module for UAV Swarm Disaster Response.
 Features:
+- Smooth 60 FPS Visual Interpolation (drones glide seamlessly instead of jumping).
 - Procedural 3D Quadcopter Drones (carbon X-frame, 4 motor pods, animated spinning rotors, LED navigation lights, camera gimbal).
+- FLIR / Thermal Night Vision Mode (tactical dark environment, glowing heat signatures, drone searchlight cones).
 - Architectural Buildings (window lattices, rooftop helipads, HVAC units, radio antenna spires with blinking warning lights).
 - Dynamic Volumetric Hazards (pulsing fire voxels and rising smoke puffs).
 - High-Tech Base Stations & Pulsing Survivor Distress Beacons.
@@ -55,25 +57,28 @@ class Viewer3D:
         self.origin_x = available_w // 2 - 10
         self.origin_y = max(110, int(window_height * 0.27))
 
-        # Color Palette
+        # Smooth flight visual interpolation: uav_id -> [vx, vy, vz]
+        self.visual_positions = {}
+
+        # FLIR / Thermal Night Vision Mode
+        self.thermal_mode = False
+
+        # Color Palettes (Day Ops)
         self.COLOR_BG = (238, 242, 248)
         self.COLOR_GRID = (210, 216, 226)
         self.COLOR_COVERAGE = (180, 220, 255)
 
-        # Base building concrete colors
         self.BUILDING_FACES = (
-            (165, 172, 185),  # Top (sunlit)
-            (125, 132, 145),  # Left (ambient)
-            (95, 102, 115)    # Right (shadow)
+            (165, 172, 185),  # Top
+            (125, 132, 145),  # Left
+            (95, 102, 115)    # Right
         )
         self.BUILDING_OUTLINE = (65, 70, 80)
 
-        # Window colors
         self.COLOR_WINDOW_LIT = (245, 235, 170)
         self.COLOR_WINDOW_CYAN = (195, 230, 255)
         self.COLOR_WINDOW_DARK = (55, 62, 75)
 
-        # Sector colors (soft pastels)
         self.SECTOR_COLORS = [
             (225, 238, 255),
             (255, 230, 230),
@@ -82,13 +87,25 @@ class Viewer3D:
             (255, 246, 225)
         ]
 
+        # Thermal Ops Palette
+        self.THERMAL_BG = (12, 16, 24)
+        self.THERMAL_GRID = (28, 42, 58)
+        self.THERMAL_FLOOR = (18, 24, 34)
+        self.THERMAL_COVERAGE = (30, 75, 110)
+        self.THERMAL_BUILDING_FACES = (
+            (48, 62, 85),
+            (32, 42, 60),
+            (22, 30, 44)
+        )
+        self.THERMAL_BUILDING_OUTLINE = (55, 75, 105)
+
         self.font = pygame.font.SysFont(None, 20)
         self.bold_font = pygame.font.SysFont(None, 22, bold=True)
         self.small_font = pygame.font.SysFont(None, 16)
         self.tiny_font = pygame.font.SysFont(None, 14, bold=True)
 
     # --------------------------------------------------
-    # ROTATION CONTROLS
+    # CAMERA & MODE CONTROLS
     # --------------------------------------------------
 
     def rotate_clockwise(self):
@@ -96,6 +113,9 @@ class Viewer3D:
 
     def rotate_counter_clockwise(self):
         self.view_angle = (self.view_angle - 1) % 4
+
+    def toggle_thermal_mode(self):
+        self.thermal_mode = not self.thermal_mode
 
     # --------------------------------------------------
     # COORDINATE TRANSFORMATION
@@ -107,11 +127,11 @@ class Viewer3D:
         if self.view_angle == 0:
             return x, y
         elif self.view_angle == 1:
-            return y, (w - 1 - x)
+            return y, (w - 1.0 - x)
         elif self.view_angle == 2:
-            return (w - 1 - x), (h - 1 - y)
+            return (w - 1.0 - x), (h - 1.0 - y)
         elif self.view_angle == 3:
-            return (h - 1 - y), x
+            return (h - 1.0 - y), x
         return x, y
 
     def project(self, x, y, z):
@@ -154,6 +174,9 @@ class Viewer3D:
         hth = self.tile_height // 2
         lh = self.layer_height
 
+        faces = self.THERMAL_BUILDING_FACES if self.thermal_mode else self.BUILDING_FACES
+        outline = self.THERMAL_BUILDING_OUTLINE if self.thermal_mode else self.BUILDING_OUTLINE
+
         # 1. Base Concrete Faces
         top_pts = [
             (top_cx, top_cy - hth),
@@ -174,36 +197,38 @@ class Viewer3D:
             (top_cx, top_cy + hth + lh)
         ]
 
-        pygame.draw.polygon(surface, self.BUILDING_FACES[0], top_pts)
-        pygame.draw.polygon(surface, self.BUILDING_FACES[1], left_pts)
-        pygame.draw.polygon(surface, self.BUILDING_FACES[2], right_pts)
+        pygame.draw.polygon(surface, faces[0], top_pts)
+        pygame.draw.polygon(surface, faces[1], left_pts)
+        pygame.draw.polygon(surface, faces[2], right_pts)
 
         # 2. Window Lattices on Left and Right Facades
-        # 2 windows across each face
         win_w = max(2, htw // 4)
         win_h = max(2, lh // 3)
 
-        # Left facade windows
         for row in range(2):
             for col in range(2):
                 h_seed = (x * 17 + y * 31 + z * 7 + row * 3 + col) % 5
-                win_col = self.COLOR_WINDOW_CYAN if h_seed in (0, 1) else (
-                    self.COLOR_WINDOW_LIT if h_seed == 2 else self.COLOR_WINDOW_DARK
-                )
-                # Interpolate on left parallelogram
+                if self.thermal_mode:
+                    win_col = (110, 230, 255) if h_seed in (0, 1) else (30, 42, 60)
+                else:
+                    win_col = self.COLOR_WINDOW_CYAN if h_seed in (0, 1) else (
+                        self.COLOR_WINDOW_LIT if h_seed == 2 else self.COLOR_WINDOW_DARK
+                    )
                 u = 0.25 + col * 0.45
                 v = 0.25 + row * 0.45
                 wx = int((top_cx - htw) * (1 - u) + top_cx * u)
                 wy = int(top_cy * (1 - u) + (top_cy + hth) * u + lh * v)
                 pygame.draw.rect(surface, win_col, (wx - 1, wy - 1, win_w, win_h))
 
-        # Right facade windows
         for row in range(2):
             for col in range(2):
                 h_seed = (x * 19 + y * 23 + z * 11 + row * 5 + col) % 5
-                win_col = self.COLOR_WINDOW_CYAN if h_seed in (0, 2) else (
-                    self.COLOR_WINDOW_LIT if h_seed == 1 else self.COLOR_WINDOW_DARK
-                )
+                if self.thermal_mode:
+                    win_col = (110, 230, 255) if h_seed in (0, 2) else (30, 42, 60)
+                else:
+                    win_col = self.COLOR_WINDOW_CYAN if h_seed in (0, 2) else (
+                        self.COLOR_WINDOW_LIT if h_seed == 1 else self.COLOR_WINDOW_DARK
+                    )
                 u = 0.25 + col * 0.45
                 v = 0.25 + row * 0.45
                 wx = int(top_cx * (1 - u) + (top_cx + htw) * u)
@@ -211,53 +236,49 @@ class Viewer3D:
                 pygame.draw.rect(surface, win_col, (wx - 1, wy - 1, win_w, win_h))
 
         # 3. Solid Edges Outline
-        pygame.draw.polygon(surface, self.BUILDING_OUTLINE, top_pts, 1)
-        pygame.draw.polygon(surface, self.BUILDING_OUTLINE, left_pts, 1)
-        pygame.draw.polygon(surface, self.BUILDING_OUTLINE, right_pts, 1)
+        pygame.draw.polygon(surface, outline, top_pts, 1)
+        pygame.draw.polygon(surface, outline, left_pts, 1)
+        pygame.draw.polygon(surface, outline, right_pts, 1)
 
-        # 4. Rooftop Features (if this is the top of the building column)
+        # 4. Rooftop Features
         is_rooftop = (z == self.grid_depth - 1) or (disaster_map.grid[z + 1][y][x] != OBSTACLE)
         if is_rooftop:
-            # Parapet inset ledge
             p_pts = [
                 (top_cx, top_cy - hth + 2),
                 (top_cx + htw - 3, top_cy),
                 (top_cx, top_cy + hth - 2),
                 (top_cx - htw + 3, top_cy)
             ]
-            pygame.draw.polygon(surface, (135, 142, 155), p_pts)
-            pygame.draw.polygon(surface, (85, 92, 105), p_pts, 1)
+            roof_p_col = (40, 52, 72) if self.thermal_mode else (135, 142, 155)
+            pygame.draw.polygon(surface, roof_p_col, p_pts)
+            pygame.draw.polygon(surface, outline, p_pts, 1)
 
             feature_type = (x * 7 + y * 13) % 4
             if feature_type == 0:
-                # Radio/Communication Antenna with blinking obstacle warning beacon
                 antenna_top_y = top_cy - 14
-                pygame.draw.line(surface, (80, 85, 95), (top_cx, top_cy), (top_cx, antenna_top_y), 2)
-                # Blinking red beacon
-                if (pygame.time.get_ticks() // 500) % 2 == 0:
-                    pygame.draw.circle(surface, (255, 30, 30), (top_cx, antenna_top_y), 2)
-                else:
-                    pygame.draw.circle(surface, (120, 20, 20), (top_cx, antenna_top_y), 2)
+                pygame.draw.line(surface, outline, (top_cx, top_cy), (top_cx, antenna_top_y), 2)
+                beacon_col = (255, 60, 60) if ((pygame.time.get_ticks() // 500) % 2 == 0) else (140, 20, 20)
+                pygame.draw.circle(surface, beacon_col, (top_cx, antenna_top_y), 2)
 
             elif feature_type == 1:
-                # Rooftop HVAC Unit (raised metallic box)
                 hvac_pts = [
                     (top_cx - 4, top_cy - 3),
                     (top_cx + 4, top_cy - 3),
                     (top_cx + 4, top_cy + 2),
                     (top_cx - 4, top_cy + 2)
                 ]
-                pygame.draw.polygon(surface, (100, 110, 120), hvac_pts)
-                pygame.draw.polygon(surface, (60, 65, 75), hvac_pts, 1)
+                hvac_col = (60, 75, 100) if self.thermal_mode else (100, 110, 120)
+                pygame.draw.polygon(surface, hvac_col, hvac_pts)
+                pygame.draw.polygon(surface, outline, hvac_pts, 1)
 
             elif feature_type == 2:
-                # Rooftop Helipad ('H' inside circle)
-                pygame.draw.circle(surface, (240, 200, 40), (top_cx, top_cy), 5, 1)
-                h_txt = self.tiny_font.render("H", True, (240, 200, 40))
+                helipad_col = (100, 220, 255) if self.thermal_mode else (240, 200, 40)
+                pygame.draw.circle(surface, helipad_col, (top_cx, top_cy), 5, 1)
+                h_txt = self.tiny_font.render("H", True, helipad_col)
                 surface.blit(h_txt, (top_cx - h_txt.get_width() // 2, top_cy - h_txt.get_height() // 2))
 
     # --------------------------------------------------
-    # DRAWING: VOLUMETRIC HAZARDS (PULSING FIRE & SMOKE)
+    # DRAWING: VOLUMETRIC HAZARDS
     # --------------------------------------------------
 
     def draw_volumetric_hazard(self, surface, x, y, z):
@@ -267,13 +288,19 @@ class Viewer3D:
         hth = self.tile_height // 2
         lh = self.layer_height
 
-        # Pulsing flame colors
         pulse = 0.5 + 0.5 * math.sin(pygame.time.get_ticks() * 0.008 + x * 2.0 + y * 1.5)
-        top_r = int(230 + pulse * 25)
-        top_g = int(90 + pulse * 50)
-        top_col = (top_r, top_g, 20)
-        left_col = (int(190 + pulse * 30), int(60 + pulse * 20), 10)
-        right_col = (int(150 + pulse * 30), 30, 5)
+
+        if self.thermal_mode:
+            # White-hot infrared thermal signature
+            top_col = (255, int(230 + pulse * 25), int(160 + pulse * 50))
+            left_col = (240, int(150 + pulse * 50), 30)
+            right_col = (200, int(80 + pulse * 40), 10)
+        else:
+            top_r = int(230 + pulse * 25)
+            top_g = int(90 + pulse * 50)
+            top_col = (top_r, top_g, 20)
+            left_col = (int(190 + pulse * 30), int(60 + pulse * 20), 10)
+            right_col = (int(150 + pulse * 30), 30, 5)
 
         top_pts = [
             (top_cx, top_cy - hth),
@@ -297,7 +324,7 @@ class Viewer3D:
         pygame.draw.polygon(surface, top_col, top_pts)
         pygame.draw.polygon(surface, left_col, left_pts)
         pygame.draw.polygon(surface, right_col, right_pts)
-        pygame.draw.polygon(surface, (140, 30, 0), top_pts, 1)
+        pygame.draw.polygon(surface, (150, 30, 0), top_pts, 1)
 
         # Rising smoke puff
         smoke_phase = ((pygame.time.get_ticks() + x * 250 + y * 400) % 1200) / 1200.0
@@ -305,26 +332,46 @@ class Viewer3D:
         smoke_rad = int(3 + smoke_phase * 4)
         smoke_surf = pygame.Surface((smoke_rad * 2, smoke_rad * 2), pygame.SRCALPHA)
         smoke_alpha = int((1.0 - smoke_phase) * 110)
-        pygame.draw.circle(smoke_surf, (80, 80, 90, smoke_alpha), (smoke_rad, smoke_rad), smoke_rad)
+        smoke_col = (140, 160, 180, smoke_alpha) if self.thermal_mode else (80, 80, 90, smoke_alpha)
+        pygame.draw.circle(smoke_surf, smoke_col, (smoke_rad, smoke_rad), smoke_rad)
         surface.blit(smoke_surf, (top_cx - smoke_rad, smoke_y - smoke_rad))
 
     # --------------------------------------------------
     # DRAWING: PROCEDURAL 3D QUADCOPTER
     # --------------------------------------------------
 
-    def draw_quadcopter(self, surface, uav, ux, uy):
+    def draw_quadcopter(self, surface, uav, ux, uy, gx, gy):
         """
         Renders an authentic 3D X-frame Quadcopter:
+        - Downward searchlight cone (Thermal mode).
         - Aerodynamic carbon central hub in team color.
         - 4 diagonal carbon motor arms.
         - 4 motor hubs with spinning rotor blades (motion blur).
         - Twin front LEDs (status colored) & twin rear red LEDs.
         - Underbody optical sensor / camera gimbal.
         """
+        # Thermal Searchlight Cone onto ground
+        if self.thermal_mode and uav.status != "DEAD":
+            spot_w = max(24, self.tile_width)
+            spot_h = max(12, self.tile_height)
+            spot_surf = pygame.Surface((spot_w, spot_h), pygame.SRCALPHA)
+            pygame.draw.ellipse(spot_surf, (140, 255, 210, 40), (0, 0, spot_w, spot_h))
+            surface.blit(spot_surf, (gx - spot_w // 2, gy - spot_h // 2))
+
+            # Light rays from drone to spot
+            beam_surf = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
+            beam_pts = [
+                (ux - 3, uy + 2),
+                (ux + 3, uy + 2),
+                (gx + spot_w // 2 - 2, gy),
+                (gx - spot_w // 2 + 2, gy)
+            ]
+            pygame.draw.polygon(beam_surf, (140, 255, 210, 18), beam_pts)
+            surface.blit(beam_surf, (0, 0))
+
         arm_len_x = max(7, self.tile_width // 3)
         arm_len_y = max(4, self.tile_height // 2)
 
-        # 4 Motor Positions (X configuration)
         motor_offsets = [
             (+arm_len_x, -arm_len_y),  # Front-Right
             (-arm_len_x, -arm_len_y),  # Front-Left
@@ -332,9 +379,10 @@ class Viewer3D:
             (-arm_len_x, +arm_len_y)   # Rear-Left
         ]
 
-        # 1. Carbon Fiber Arms (cross struts)
+        # 1. Carbon Fiber Arms
+        arm_col = (20, 24, 30) if self.thermal_mode else (40, 44, 52)
         for dx, dy in motor_offsets:
-            pygame.draw.line(surface, (40, 44, 52), (ux, uy), (ux + dx, uy + dy), 2)
+            pygame.draw.line(surface, arm_col, (ux, uy), (ux + dx, uy + dy), 2)
 
         # 2. Motor Pods & Spinning Propellers
         rotor_t = pygame.time.get_ticks() * 0.04
@@ -344,18 +392,17 @@ class Viewer3D:
             mx = ux + dx
             my = uy + dy
 
-            # Motor cylinder
             pygame.draw.circle(surface, (55, 60, 70), (mx, my), 3)
             pygame.draw.circle(surface, (25, 28, 35), (mx, my), 1)
 
             # Spinning Rotor Blade (Motion Blur Disk)
             disk_surf = pygame.Surface((blade_r * 2 + 2, blade_r + 2), pygame.SRCALPHA)
+            disk_col = (140, 240, 255, 110) if self.thermal_mode else (210, 230, 255, 95)
             pygame.draw.ellipse(
                 disk_surf,
-                (210, 230, 255, 95),
+                disk_col,
                 (1, 1, blade_r * 2, blade_r)
             )
-            # Propeller tip streak
             blade_angle = rotor_t + i * (math.pi / 2)
             bx = blade_r + int((blade_r - 1) * math.cos(blade_angle))
             by = (blade_r // 2) + int((blade_r // 2 - 1) * math.sin(blade_angle))
@@ -364,11 +411,9 @@ class Viewer3D:
             surface.blit(disk_surf, (mx - blade_r - 1, my - blade_r // 2 - 1))
 
         # 3. Navigation Status LEDs
-        # Front arms (index 0, 1): status color (Green/Cyan/Blue)
-        # Rear arms (index 2, 3): Red
         led_blink = (pygame.time.get_ticks() // 200) % 2 == 0
         if uav.status == "RESCUING":
-            front_led_col = (0, 180, 255) if led_blink else (0, 80, 150)
+            front_led_col = (0, 210, 255) if led_blink else (0, 90, 160)
         elif uav.status == "RETURNING":
             front_led_col = (255, 170, 0) if led_blink else (140, 80, 0)
         elif uav.status == "CHARGING":
@@ -376,10 +421,8 @@ class Viewer3D:
         else:
             front_led_col = (40, 255, 120) if led_blink else (20, 120, 50)
 
-        # Front LEDs
         pygame.draw.circle(surface, front_led_col, (ux + motor_offsets[0][0], uy + motor_offsets[0][1]), 2)
         pygame.draw.circle(surface, front_led_col, (ux + motor_offsets[1][0], uy + motor_offsets[1][1]), 2)
-        # Rear LEDs
         pygame.draw.circle(surface, (240, 40, 40), (ux + motor_offsets[2][0], uy + motor_offsets[2][1]), 2)
         pygame.draw.circle(surface, (240, 40, 40), (ux + motor_offsets[3][0], uy + motor_offsets[3][1]), 2)
 
@@ -393,11 +436,9 @@ class Viewer3D:
             (ux, uy + hub_h // 2),
             (ux - hub_w // 2, uy)
         ]
-        # Carbon rim
-        pygame.draw.polygon(surface, (25, 30, 38), hub_pts)
+        pygame.draw.polygon(surface, (20, 25, 32), hub_pts)
         pygame.draw.polygon(surface, (60, 68, 80), hub_pts, 1)
 
-        # Team Color Canopy Dome
         canopy_pts = [
             (ux, uy - hub_h // 2 + 1),
             (ux + hub_w // 2 - 2, uy),
@@ -418,12 +459,14 @@ class Viewer3D:
         by = uy - hub_h // 2 - 10
 
         pill_surf = pygame.Surface((bw, bh), pygame.SRCALPHA)
-        pygame.draw.rect(pill_surf, (20, 25, 35, 210), (0, 0, bw, bh), border_radius=3)
+        pill_col = (10, 15, 25, 230) if self.thermal_mode else (20, 25, 35, 210)
+        pygame.draw.rect(pill_surf, pill_col, (0, 0, bw, bh), border_radius=3)
         surface.blit(pill_surf, (bx, by))
         surface.blit(badge_txt, (bx + 3, by + 1))
 
         # Altitude Tag
-        alt_txt = self.tiny_font.render(f"z:{uav.z}", True, (50, 60, 75))
+        alt_col = (100, 220, 255) if self.thermal_mode else (50, 60, 75)
+        alt_txt = self.tiny_font.render(f"z:{uav.z}", True, alt_col)
         surface.blit(alt_txt, (ux + arm_len_x + 4, uy - 4))
 
     # --------------------------------------------------
@@ -433,30 +476,33 @@ class Viewer3D:
     def draw_survivor_beacon(self, surface, cx, cy, is_rescued):
         """Distress beacon with expanding sonar pulse ring or green rescue shield."""
         if not is_rescued:
-            # Active Distress Beacon
             pulse_val = (pygame.time.get_ticks() % 1000) / 1000.0
             pulse_r = int(5 + pulse_val * 9)
-            pulse_alpha = int((1.0 - pulse_val) * 180)
+            pulse_alpha = int((1.0 - pulse_val) * 190)
 
             # Pulsing Sonar Ring
             pulse_surf = pygame.Surface((pulse_r * 2 + 2, pulse_r + 2), pygame.SRCALPHA)
+            ring_col = (255, 240, 100, pulse_alpha) if self.thermal_mode else (255, 210, 0, pulse_alpha)
             pygame.draw.ellipse(
                 pulse_surf,
-                (255, 210, 0, pulse_alpha),
+                ring_col,
                 (1, 1, pulse_r * 2, pulse_r),
                 1
             )
             surface.blit(pulse_surf, (cx - pulse_r - 1, cy - pulse_r // 2 - 1))
 
-            # Core Beacon
-            pygame.draw.circle(surface, (255, 200, 0), (cx, cy), 5)
-            pygame.draw.circle(surface, (230, 40, 20), (cx, cy), 3)
-            pygame.draw.circle(surface, (255, 255, 255), (cx, cy), 1)
+            # Thermal glowing hot signature or daytime beacon
+            if self.thermal_mode:
+                pygame.draw.circle(surface, (255, 255, 230), (cx, cy), 6)
+                pygame.draw.circle(surface, (255, 180, 50), (cx, cy), 4)
+                pygame.draw.circle(surface, (255, 255, 255), (cx, cy), 2)
+            else:
+                pygame.draw.circle(surface, (255, 200, 0), (cx, cy), 5)
+                pygame.draw.circle(surface, (230, 40, 20), (cx, cy), 3)
+                pygame.draw.circle(surface, (255, 255, 255), (cx, cy), 1)
 
         else:
-            # Rescued Medical Cross
             pygame.draw.circle(surface, (34, 160, 60), (cx, cy), 6)
-            # White Cross
             pygame.draw.line(surface, (255, 255, 255), (cx - 3, cy), (cx + 3, cy), 2)
             pygame.draw.line(surface, (255, 255, 255), (cx, cy - 3), (cx, cy + 3), 2)
 
@@ -466,53 +512,68 @@ class Viewer3D:
         pad_w = max(12, self.tile_width // 2)
         pad_h = max(6, self.tile_height // 2)
 
-        # Pad Diamond Plate
         pts = [
             (cx, cy - pad_h // 2),
             (cx + pad_w // 2, cy),
             (cx, cy + pad_h // 2),
             (cx - pad_w // 2, cy)
         ]
-        pygame.draw.polygon(surface, (45, 50, 62), pts)
+        pad_col = (25, 32, 45) if self.thermal_mode else (45, 50, 62)
+        pygame.draw.polygon(surface, pad_col, pts)
         pygame.draw.polygon(surface, color, pts, 1)
 
-        # Charging Target Circle
-        pygame.draw.ellipse(surface, (90, 100, 120), (cx - 4, cy - 2, 8, 4), 1)
+        ring_col = (100, 180, 255) if self.thermal_mode else (90, 100, 120)
+        pygame.draw.ellipse(surface, ring_col, (cx - 4, cy - 2, 8, 4), 1)
 
     # --------------------------------------------------
-    # FULL SCENE RENDER (DEPTH SORTED)
+    # FULL SCENE RENDER (SMOOTH FLIGHT & DEPTH SORTED)
     # --------------------------------------------------
 
     def render(self, screen, disaster_map, coordinator, uavs):
-        """Renders the entire 3D simulation with architectural models and quadcopters."""
-        screen.fill(self.COLOR_BG)
+        """Renders the entire 3D simulation with visual interpolation and depth sorting."""
+        bg_col = self.THERMAL_BG if self.thermal_mode else self.COLOR_BG
+        screen.fill(bg_col)
 
         # 1. Ground Floor Diamonds
         coverage_set = coordinator.get_coverage()
         sectors = coordinator.sectors
 
+        grid_col = self.THERMAL_GRID if self.thermal_mode else self.COLOR_GRID
+        cov_col = self.THERMAL_COVERAGE if self.thermal_mode else self.COLOR_COVERAGE
+
         for y in range(self.grid_height):
             for x in range(self.grid_width):
                 cx, cy = self.project(x, y, 0)
 
-                # Sector pastel tint
                 sector_idx = 0
                 for s_i, (s_start, s_end) in enumerate(sectors):
                     if s_start <= x <= s_end:
                         sector_idx = s_i % len(self.SECTOR_COLORS)
                         break
 
-                floor_color = self.SECTOR_COLORS[sector_idx]
+                if self.thermal_mode:
+                    floor_color = self.THERMAL_FLOOR
+                else:
+                    floor_color = self.SECTOR_COLORS[sector_idx]
 
-                # Explored ground coverage
                 if (x, y) in coverage_set:
-                    floor_color = self.COLOR_COVERAGE
+                    floor_color = cov_col
 
-                self.draw_diamond(screen, cx, cy, floor_color, self.COLOR_GRID)
+                self.draw_diamond(screen, cx, cy, floor_color, grid_col)
 
-        # 2. Gather Entities for Depth Sorting
-        # Sorting key: (rx + ry, z, priority)
-        # Priority: 0: Solid Cubes, 1: Ground Items, 2: UAVs
+        # 2. Update Smooth Visual Flight Positions (60 FPS Interpolation)
+        lerp_speed = 0.22
+        for uav in uavs:
+            if uav.id not in self.visual_positions:
+                self.visual_positions[uav.id] = [float(uav.x), float(uav.y), float(uav.z)]
+            else:
+                vx, vy, vz = self.visual_positions[uav.id]
+                vx += (uav.x - vx) * lerp_speed
+                vy += (uav.y - vy) * lerp_speed
+                vz += (uav.z - vz) * lerp_speed
+                self.visual_positions[uav.id] = [vx, vy, vz]
+
+        # 3. Gather Entities for Depth Sorting
         render_queue = []
 
         for z in range(self.grid_depth):
@@ -540,21 +601,22 @@ class Viewer3D:
         for uav in uavs:
             if uav.status == "DEAD":
                 continue
-            rx, ry = self.rotate_coords(uav.x, uav.y)
-            render_queue.append((rx + ry, uav.z, 2, "UAV", uav))
+            vx, vy, vz = self.visual_positions[uav.id]
+            rx, ry = self.rotate_coords(vx, vy)
+            render_queue.append((rx + ry, vz, 2, "UAV", (uav, vx, vy, vz)))
 
         # Painter's Algorithm Depth Sort
         render_queue.sort(key=lambda item: (item[0], item[1], item[2]))
 
-        # 3. Draw Target Lines
+        # 4. Draw Target Lines
         for uav in uavs:
             if uav.target and uav.status != "DEAD":
-                ux, uy = self.project(uav.x, uav.y, uav.z)
+                vx, vy, vz = self.visual_positions[uav.id]
+                ux, uy = self.project(vx, vy, vz)
                 tx, ty = self.project(uav.target[0], uav.target[1], uav.target[2] if len(uav.target) > 2 else 0)
-                # Dotted/dashed target line
                 pygame.draw.line(screen, uav.color, (ux, uy), (tx, ty), 2)
 
-        # 4. Render All Sorted Entities
+        # 5. Render All Sorted Entities
         for _, _, _, item_type, data in render_queue:
 
             if item_type == "BUILDING":
@@ -580,27 +642,39 @@ class Viewer3D:
                 self.draw_base_station(screen, bx, by, bz, color)
 
             elif item_type == "UAV":
-                uav = data
+                uav, vx, vy, vz = data
 
                 # Ground Shadow
-                gx, gy = self.project(uav.x, uav.y, 0)
+                gx, gy = self.project(vx, vy, 0)
                 shadow_w = max(14, self.tile_width // 2)
                 shadow_h = max(7, self.tile_height // 2)
                 shadow_surf = pygame.Surface((shadow_w, shadow_h), pygame.SRCALPHA)
-                pygame.draw.ellipse(shadow_surf, (40, 45, 55, 115), (0, 0, shadow_w, shadow_h))
+                shadow_col = (10, 15, 25, 140) if self.thermal_mode else (40, 45, 55, 115)
+                pygame.draw.ellipse(shadow_surf, shadow_col, (0, 0, shadow_w, shadow_h))
                 screen.blit(shadow_surf, (gx - shadow_w // 2, gy - shadow_h // 2))
 
                 # Vertical Altitude Drop-Line
-                ux, uy = self.project(uav.x, uav.y, uav.z)
-                if uav.z > 0:
-                    pygame.draw.line(screen, (100, 115, 135), (gx, gy), (ux, uy), 1)
+                ux, uy = self.project(vx, vy, vz)
+                if vz > 0.05:
+                    line_col = (80, 130, 170) if self.thermal_mode else (100, 115, 135)
+                    pygame.draw.line(screen, line_col, (gx, gy), (ux, uy), 1)
 
-                # Procedural 3D Quadcopter
-                self.draw_quadcopter(screen, uav, ux, uy)
+                # Procedural 3D Quadcopter at smooth visual coordinates
+                self.draw_quadcopter(screen, uav, ux, uy, gx, gy)
 
-        # 5. Top Controls & Camera Banner
-        cam_text = self.bold_font.render(f"Camera View: {self.view_names[self.view_angle]}", True, (30, 40, 60))
-        screen.blit(cam_text, (20, 15))
+        # 6. Top Controls & Camera Banner
+        view_str = f"Camera: {self.view_names[self.view_angle]}"
+        if self.thermal_mode:
+            view_str += "  |  [MODE: FLIR THERMAL NIGHT]"
 
-        help_text = self.small_font.render("Rotate: [<-] [->] or [A] [D]  |  Space: Pause/Resume", True, (90, 105, 125))
-        screen.blit(help_text, (20, 38))
+        title_col = (100, 240, 255) if self.thermal_mode else (30, 40, 60)
+        cam_text = self.bold_font.render(view_str, True, title_col)
+        screen.blit(cam_text, (20, 14))
+
+        sub_col = (130, 170, 200) if self.thermal_mode else (90, 105, 125)
+        help_text = self.small_font.render(
+            "Controls: [<-] [->] Rotate | [T] Thermal FLIR | [+/-] Speed | [R] Restart | [Space] Pause",
+            True,
+            sub_col
+        )
+        screen.blit(help_text, (20, 36))

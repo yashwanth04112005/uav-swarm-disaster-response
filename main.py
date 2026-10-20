@@ -27,7 +27,11 @@ WINDOW_HEIGHT = 640
 
 NUM_UAVS = 5
 
-MOVE_INTERVAL = 400
+SPEED_INTERVALS = [800, 400, 200, 100, 50]
+SPEED_LABELS = ["0.5x", "1.0x", "2.0x", "4.0x", "8.0x"]
+current_speed_idx = 1
+
+MOVE_INTERVAL = SPEED_INTERVALS[current_speed_idx]
 HAZARD_INTERVAL = 8000
 
 
@@ -56,44 +60,6 @@ bold_font = pygame.font.SysFont(None, 22 if WINDOW_WIDTH < 1000 else 24, bold=Tr
 
 
 # ==================================================
-# CREATE 3D DISASTER ENVIRONMENT
-# ==================================================
-
-disaster_map = DisasterMap(
-    GRID_WIDTH,
-    GRID_HEIGHT,
-    GRID_DEPTH
-)
-
-disaster_map.generate()
-
-
-# ==================================================
-# CREATE SWARM COORDINATOR
-# ==================================================
-
-coordinator = SwarmCoordinator(
-    GRID_WIDTH,
-    GRID_HEIGHT,
-    GRID_DEPTH,
-    NUM_UAVS
-)
-
-
-# ==================================================
-# CREATE 3D ISOMETRIC VIEWER
-# ==================================================
-
-viewer = Viewer3D(
-    grid_width=GRID_WIDTH,
-    grid_height=GRID_HEIGHT,
-    grid_depth=GRID_DEPTH,
-    window_width=WINDOW_WIDTH,
-    window_height=WINDOW_HEIGHT
-)
-
-
-# ==================================================
 # UAV COLORS
 # ==================================================
 
@@ -107,97 +73,94 @@ uav_colors = [
 
 
 # ==================================================
-# RANDOM UAV SPAWN (GROUND LAYER)
+# 3D ISOMETRIC VIEWER
 # ==================================================
 
-def get_random_empty_cell_in_sector(
-    start_x,
-    end_x
-):
+viewer = Viewer3D(
+    grid_width=GRID_WIDTH,
+    grid_height=GRID_HEIGHT,
+    grid_depth=GRID_DEPTH,
+    window_width=WINDOW_WIDTH,
+    window_height=WINDOW_HEIGHT
+)
 
+
+# ==================================================
+# SIMULATION STATE & RESET FUNCTION
+# ==================================================
+
+disaster_map = None
+coordinator = None
+uavs = []
+mission_complete = False
+paused = False
+
+
+def get_random_empty_cell_in_sector(dmap, start_x, end_x):
     attempts = 0
     max_attempts = GRID_WIDTH * GRID_HEIGHT * 10
 
     while attempts < max_attempts:
-
-        x = random.randint(
-            start_x,
-            end_x
-        )
-
-        y = random.randint(
-            0,
-            GRID_HEIGHT - 1
-        )
-
-        # Check ground layer (z = 0)
-        if disaster_map.grid[0][y][x] == EMPTY:
-
-            return (
-                x,
-                y
-            )
-
+        x = random.randint(start_x, end_x)
+        y = random.randint(0, GRID_HEIGHT - 1)
+        if dmap.grid[0][y][x] == EMPTY:
+            return x, y
         attempts += 1
 
-    return (
-        start_x,
-        0
+    return start_x, 0
+
+
+def reset_simulation():
+    global disaster_map, coordinator, uavs, mission_complete
+
+    disaster_map = DisasterMap(
+        GRID_WIDTH,
+        GRID_HEIGHT,
+        GRID_DEPTH
     )
+    disaster_map.generate()
+
+    coordinator = SwarmCoordinator(
+        GRID_WIDTH,
+        GRID_HEIGHT,
+        GRID_DEPTH,
+        NUM_UAVS
+    )
+
+    uavs = []
+    viewer.visual_positions.clear()
+
+    for i in range(NUM_UAVS):
+        uav_id = i + 1
+        sector = coordinator.get_sector(uav_id)
+        start_x, end_x = sector
+
+        spawn_x, spawn_y = get_random_empty_cell_in_sector(disaster_map, start_x, end_x)
+
+        uav = UAV(
+            drone_id=uav_id,
+            x=spawn_x,
+            y=spawn_y,
+            z=0,
+            color=uav_colors[i],
+            search_altitude=2
+        )
+        uavs.append(uav)
+
+        coordinator.update_uav_position(uav_id, uav.get_position())
+        coordinator.set_base(uav_id, uav.base_position)
+        coordinator.add_coverage(uav.get_position())
+
+    mission_complete = False
+    print("[SIMULATION] Environment & Swarm regenerated.")
+
+
+# Initialize first run
+reset_simulation()
 
 
 # ==================================================
-# CREATE 3D UAVS
-# ==================================================
-
-uavs = []
-
-for i in range(NUM_UAVS):
-
-    uav_id = i + 1
-
-    sector = coordinator.get_sector(
-        uav_id
-    )
-
-    start_x, end_x = sector
-
-    spawn_x, spawn_y = get_random_empty_cell_in_sector(
-        start_x,
-        end_x
-    )
-
-    uav = UAV(
-        drone_id=uav_id,
-        x=spawn_x,
-        y=spawn_y,
-        z=0,
-        color=uav_colors[i],
-        search_altitude=2
-    )
-
-    uavs.append(uav)
-
-    # Register UAV position (x, y, z)
-    coordinator.update_uav_position(
-        uav_id,
-        uav.get_position()
-    )
-
-    # Register UAV base (x, y, z)
-    coordinator.set_base(
-        uav_id,
-        uav.base_position
-    )
-
-    # Initial ground footprint coverage
-    coordinator.add_coverage(
-        uav.get_position()
-    )
-
-
-# ==================================================
-# PYGAME EVENTS
+# PYGAME TIMERS
 # ==================================================
 
 MOVE_EVENT = pygame.USEREVENT + 1
@@ -212,6 +175,14 @@ pygame.time.set_timer(
     HAZARD_EVENT,
     HAZARD_INTERVAL
 )
+
+
+def apply_speed(idx):
+    global current_speed_idx, MOVE_INTERVAL
+    current_speed_idx = max(0, min(len(SPEED_INTERVALS) - 1, idx))
+    MOVE_INTERVAL = SPEED_INTERVALS[current_speed_idx]
+    pygame.time.set_timer(MOVE_EVENT, MOVE_INTERVAL)
+    print(f"[SPEED] Swarm speed set to {SPEED_LABELS[current_speed_idx]} ({MOVE_INTERVAL}ms)")
 
 
 # ==================================================
@@ -243,19 +214,22 @@ def draw_hud():
     panel_w = 230 if WINDOW_WIDTH < 1000 else 255
     panel_x = WINDOW_WIDTH - panel_w - 15
     panel_y = 15
-    panel_h = 330 if WINDOW_HEIGHT < 700 else 360
+    panel_h = 350 if WINDOW_HEIGHT < 700 else 380
 
     # Modern dark translucent panel
     hud_surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+    bg_hud_col = (10, 16, 26, 235) if viewer.thermal_mode else (25, 30, 42, 230)
+    border_hud_col = (40, 95, 140, 210) if viewer.thermal_mode else (60, 75, 100, 200)
+
     pygame.draw.rect(
         hud_surf,
-        (25, 30, 42, 230),
+        bg_hud_col,
         (0, 0, panel_w, panel_h),
         border_radius=10
     )
     pygame.draw.rect(
         hud_surf,
-        (60, 75, 100, 200),
+        border_hud_col,
         (0, 0, panel_w, panel_h),
         width=1,
         border_radius=10
@@ -263,8 +237,17 @@ def draw_hud():
     screen.blit(hud_surf, (panel_x, panel_y))
 
     # Header
-    title = bold_font.render("SWARM TELEMETRY 3D", True, (240, 245, 255))
+    title_str = "FLIR THERMAL HUD" if viewer.thermal_mode else "SWARM TELEMETRY 3D"
+    title_col = (110, 240, 255) if viewer.thermal_mode else (240, 245, 255)
+    title = bold_font.render(title_str, True, title_col)
     screen.blit(title, (panel_x + 14, panel_y + 12))
+
+    # Mode / Pause indicator
+    status_indicator = f"Speed: {SPEED_LABELS[current_speed_idx]}"
+    if paused:
+        status_indicator += " [PAUSED]"
+    stat_txt = small_font.render(status_indicator, True, (255, 200, 60) if paused else (160, 190, 220))
+    screen.blit(stat_txt, (panel_x + 14, panel_y + 36))
 
     # Metrics
     metrics = [
@@ -274,16 +257,16 @@ def draw_hud():
         (f"Survivors Rescued: {rescued}", (80, 240, 120))
     ]
 
-    curr_y = panel_y + 40
+    curr_y = panel_y + 60
     for label, col in metrics:
         txt = font.render(label, True, col)
         screen.blit(txt, (panel_x + 14, curr_y))
-        curr_y += 24
+        curr_y += 23
 
     # Separator
     pygame.draw.line(
         screen,
-        (50, 60, 80),
+        (45, 60, 80),
         (panel_x + 14, curr_y + 4),
         (panel_x + panel_w - 14, curr_y + 4),
         1
@@ -293,14 +276,13 @@ def draw_hud():
     # UAV Live Telemetry
     uav_header = bold_font.render("UAV STATUS", True, (200, 215, 235))
     screen.blit(uav_header, (panel_x + 14, curr_y))
-    curr_y += 26
+    curr_y += 24
 
     for uav in uavs:
-        # Status text with altitude
         uav_str = f"UAV {uav.id}: {uav.status[:9]} | z:{uav.z} | {uav.battery}%"
         txt = small_font.render(uav_str, True, uav.color)
         screen.blit(txt, (panel_x + 14, curr_y))
-        curr_y += 22
+        curr_y += 20
 
 
 # ==================================================
@@ -319,10 +301,10 @@ def draw_mission_complete():
 
     overlay.fill(
         (
+            10,
             15,
-            20,
-            30,
-            150
+            25,
+            160
         )
     )
 
@@ -333,7 +315,7 @@ def draw_mission_complete():
 
     big_font = pygame.font.SysFont(
         None,
-        58,
+        54,
         bold=True
     )
 
@@ -343,7 +325,7 @@ def draw_mission_complete():
         (
             50,
             255,
-            120
+            130
         )
     )
 
@@ -385,15 +367,15 @@ def draw_mission_complete():
         sub_rect
     )
 
+    hint_text = small_font.render("Press [R] to regenerate new city and mission", True, (160, 200, 240))
+    screen.blit(hint_text, (WINDOW_WIDTH // 2 - 80 - hint_text.get_width() // 2, WINDOW_HEIGHT // 2 + 65))
+
 
 # ==================================================
-# SIMULATION LOOP
+# MAIN SIMULATION LOOP
 # ==================================================
 
 running = True
-paused = False
-mission_complete = False
-
 
 while running:
 
@@ -410,14 +392,31 @@ while running:
         # Keyboard Controls
         elif event.type == pygame.KEYDOWN:
 
+            # Camera 90-degree rotations
             if event.key in (pygame.K_LEFT, pygame.K_a):
                 viewer.rotate_counter_clockwise()
 
             elif event.key in (pygame.K_RIGHT, pygame.K_d):
                 viewer.rotate_clockwise()
 
+            # Pause / Resume
             elif event.key == pygame.K_SPACE:
                 paused = not paused
+
+            # Thermal / Night Vision Mode
+            elif event.key == pygame.K_t:
+                viewer.toggle_thermal_mode()
+
+            # Regenerate & Restart Simulation
+            elif event.key == pygame.K_r:
+                reset_simulation()
+
+            # Speed Adjustments (+ / - or UP / DOWN)
+            elif event.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_UP):
+                apply_speed(current_speed_idx + 1)
+
+            elif event.key in (pygame.K_MINUS, pygame.K_UNDERSCORE, pygame.K_DOWN):
+                apply_speed(current_speed_idx - 1)
 
         # UAV Movement
         elif event.type == MOVE_EVENT:

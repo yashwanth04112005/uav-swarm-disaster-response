@@ -90,7 +90,9 @@ class UAV:
     ):
 
         if self.battery <= 0:
-
+            if self.target is not None:
+                coordinator.clear_target(self.id)
+                self.target = None
             self.status = "DEAD"
             return
 
@@ -112,7 +114,9 @@ class UAV:
             self.status != "CHARGING"
         ):
 
-            self.target = None
+            if self.target is not None:
+                coordinator.clear_target(self.id)
+                self.target = None
 
             self.path = find_path(
                 disaster_map,
