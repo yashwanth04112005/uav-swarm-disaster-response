@@ -4,11 +4,20 @@ class SwarmCoordinator:
         self,
         map_width,
         map_height,
-        num_uavs
+        map_depth=6,
+        num_uavs=None
     ):
 
         self.map_width = map_width
         self.map_height = map_height
+
+        if num_uavs is None:
+            # Backwards compatibility: called as (map_width, map_height, num_uavs)
+            self.num_uavs = map_depth
+            self.map_depth = 6
+        else:
+            self.map_depth = map_depth
+            self.num_uavs = num_uavs
 
         # ==================================================
         # SHARED INFORMATION
@@ -16,6 +25,7 @@ class SwarmCoordinator:
 
         self.shared_survivors = set()
 
+        # Ground footprint coverage: (x, y) coordinates
         self.shared_coverage = set()
 
         self.rescued_survivors = set()
@@ -28,7 +38,7 @@ class SwarmCoordinator:
 
         self.uav_bases = {}
 
-        # UAV ID -> survivor location
+        # UAV ID -> survivor location (x, y, z)
         self.assigned_targets = {}
 
         # ==================================================
@@ -38,16 +48,16 @@ class SwarmCoordinator:
         self.sectors = []
 
         sector_width = (
-            map_width // num_uavs
+            map_width // self.num_uavs
         )
 
-        for i in range(num_uavs):
+        for i in range(self.num_uavs):
 
             start_x = (
                 i * sector_width
             )
 
-            if i == num_uavs - 1:
+            if i == self.num_uavs - 1:
 
                 end_x = (
                     map_width - 1
@@ -183,7 +193,7 @@ class SwarmCoordinator:
         )
 
     # ==================================================
-    # COVERAGE MANAGEMENT
+    # COVERAGE MANAGEMENT (PROJECTED GROUND FOOTPRINT)
     # ==================================================
 
     def add_coverage(
@@ -192,7 +202,7 @@ class SwarmCoordinator:
     ):
 
         self.shared_coverage.add(
-            location
+            (location[0], location[1])
         )
 
     def add_coverage_cells(
@@ -200,9 +210,10 @@ class SwarmCoordinator:
         cells
     ):
 
-        self.shared_coverage.update(
-            cells
-        )
+        for cell in cells:
+            self.shared_coverage.add(
+                (cell[0], cell[1])
+            )
 
     def get_coverage(self):
 
@@ -266,7 +277,7 @@ class SwarmCoordinator:
         )
 
     # ==================================================
-    # COLLISION DETECTION
+    # COLLISION DETECTION (3D VOXEL OCCUPANCY)
     # ==================================================
 
     def is_position_occupied(

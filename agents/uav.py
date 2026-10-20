@@ -4,7 +4,9 @@ from environment.map import (
     OBSTACLE,
     HAZARD,
     SURVIVOR,
-    RESCUED
+    RESCUED,
+    DIRECTIONS_3D,
+    DIRECTIONS_HORIZONTAL
 )
 
 from planning.a_star import find_path
@@ -17,30 +19,32 @@ class UAV:
         drone_id,
         x,
         y,
-        color
+        z=0,
+        color=(0, 100, 255),
+        search_altitude=2
     ):
 
         self.id = drone_id
 
         self.x = x
         self.y = y
+        self.z = z
 
         self.color = color
+        self.search_altitude = search_altitude
 
         # --------------------------------------------------
         # UAV STATE
         # --------------------------------------------------
 
         self.battery = 100
-
         self.max_battery = 100
 
         self.sensor_range = 2
 
         self.visited_cells = set()
-
         self.visited_cells.add(
-            (self.x, self.y)
+            (self.x, self.y, self.z)
         )
 
         # --------------------------------------------------
@@ -49,7 +53,8 @@ class UAV:
 
         self.base_position = (
             self.x,
-            self.y
+            self.y,
+            self.z
         )
 
         # --------------------------------------------------
@@ -57,11 +62,8 @@ class UAV:
         # --------------------------------------------------
 
         self.target = None
-
         self.path = []
-
         self.status = "EXPLORING"
-
         self.rescued_count = 0
 
     # --------------------------------------------------
@@ -72,7 +74,8 @@ class UAV:
 
         return (
             self.x,
-            self.y
+            self.y,
+            self.z
         )
 
     # --------------------------------------------------
@@ -89,15 +92,20 @@ class UAV:
         if self.battery <= 0:
 
             self.status = "DEAD"
-
             return
 
         # --------------------------------------------------
-        # RETURN TO BASE WHEN BATTERY IS LOW
+        # RETURN TO BASE WHEN BATTERY IS LOW (DYNAMIC THRESHOLD)
         # --------------------------------------------------
 
+        dist_to_base = (
+            abs(self.x - self.base_position[0]) +
+            abs(self.y - self.base_position[1]) +
+            abs(self.z - self.base_position[2])
+        )
+
         if (
-            self.battery <= 20
+            self.battery <= (dist_to_base + 8)
             and
             self.status != "RETURNING"
             and
@@ -124,35 +132,26 @@ class UAV:
             next_position = self.path[0]
 
             # Check if path is still safe
-            # (hazards may have expanded)
-            nx, ny = next_position
+            # (hazards may have expanded or building ahead)
+            nx, ny, nz = next_position
 
-            if (
-                0 <= nx < disaster_map.width
-                and
-                0 <= ny < disaster_map.height
-                and
-                disaster_map.grid[ny][nx]
-                in (OBSTACLE, HAZARD)
-            ):
+            if disaster_map.is_blocked(nx, ny, nz):
 
                 self.path = []
-
                 return
 
-            # Avoid another UAV
+            # Avoid another UAV (3D collision)
             if coordinator.is_position_occupied(
                 next_position,
                 excluding_uav=self.id
             ):
 
                 self.path = []
-
                 return
 
             self.path.pop(0)
 
-            self.x, self.y = next_position
+            self.x, self.y, self.z = next_position
 
             self.visited_cells.add(
                 self.get_position()
@@ -177,8 +176,7 @@ class UAV:
         if (
             self.status == "RETURNING"
             and
-            self.get_position()
-            == self.base_position
+            self.get_position() == self.base_position
         ):
 
             self.status = "CHARGING"
@@ -205,16 +203,12 @@ class UAV:
 
         # --------------------------------------------------
         # RETURNING BUT PATH WAS CLEARED
-        #
-        # Re-plan the path to base instead of
-        # falling through to exploration.
         # --------------------------------------------------
 
         if (
             self.status == "RETURNING"
             and
-            self.get_position()
-            != self.base_position
+            self.get_position() != self.base_position
         ):
 
             self.path = find_path(
@@ -257,7 +251,6 @@ class UAV:
                 )
 
                 self.target = None
-
                 self.status = "EXPLORING"
 
         # --------------------------------------------------
@@ -271,7 +264,7 @@ class UAV:
         )
 
     # --------------------------------------------------
-    # EXPLORATION
+    # EXPLORATION (STRATEGY E1: ALTITUDE SWEEP)
     # --------------------------------------------------
 
     def explore(
@@ -284,31 +277,47 @@ class UAV:
         if self.battery <= 0:
 
             self.status = "DEAD"
-
             return
 
-        start = self.get_position()
+        # Climb to search altitude first if below it
+        if self.z < self.search_altitude:
 
+            climb_target = (
+                self.x,
+                self.y,
+                self.search_altitude
+            )
+
+            climb_path = find_path(
+                disaster_map,
+                self.get_position(),
+                climb_target,
+                sector
+            )
+
+            if climb_path:
+
+                self.path = climb_path
+                return self.move(
+                    disaster_map,
+                    sector,
+                    coordinator
+                )
+
+        start = self.get_position()
         sector_start_x, sector_end_x = sector
 
-        directions = [
-            (0, -1),
-            (0, 1),
-            (-1, 0),
-            (1, 0)
-        ]
-
         # --------------------------------------------------
-        # STEP 1:
-        # LOOK FOR IMMEDIATELY UNVISITED CELLS
+        # STEP 1: LOOK FOR DIRECT UNVISITED HORIZONTAL NEIGHBOURS
         # --------------------------------------------------
 
         unvisited_moves = []
 
-        for dx, dy in directions:
+        for dx, dy, dz in DIRECTIONS_HORIZONTAL:
 
             new_x = self.x + dx
             new_y = self.y + dy
+            new_z = self.z
 
             if not (
                 sector_start_x
@@ -318,30 +327,18 @@ class UAV:
 
                 continue
 
-            if not (
-                0 <= new_x < disaster_map.width
-                and
-                0 <= new_y < disaster_map.height
-            ):
+            if not disaster_map.is_inside(new_x, new_y, new_z):
 
                 continue
 
-            cell = disaster_map.grid[
-                new_y
-            ][
-                new_x
-            ]
-
-            if cell in (
-                OBSTACLE,
-                HAZARD
-            ):
+            if disaster_map.is_blocked(new_x, new_y, new_z):
 
                 continue
 
             position = (
                 new_x,
-                new_y
+                new_y,
+                new_z
             )
 
             if coordinator.is_position_occupied(
@@ -357,17 +354,11 @@ class UAV:
                     position
                 )
 
-        # --------------------------------------------------
-        # ALWAYS PREFER DIRECT UNVISITED CELLS
-        # --------------------------------------------------
-
         if unvisited_moves:
 
-            # Choose the first available unexplored cell.
-            # This keeps the algorithm simple and predictable.
             chosen = unvisited_moves[0]
 
-            self.x, self.y = chosen
+            self.x, self.y, self.z = chosen
 
             self.visited_cells.add(
                 self.get_position()
@@ -386,10 +377,7 @@ class UAV:
             return
 
         # --------------------------------------------------
-        # STEP 2:
-        # NO UNVISITED NEIGHBOUR
-        #
-        # SEARCH FOR THE NEAREST REACHABLE UNVISITED CELL
+        # STEP 2: SEARCH FOR NEAREST REACHABLE UNVISITED CELL
         # --------------------------------------------------
 
         target = self.find_nearest_unvisited_cell(
@@ -398,20 +386,13 @@ class UAV:
             coordinator
         )
 
-        # --------------------------------------------------
-        # NO REACHABLE UNVISITED CELL
-        # --------------------------------------------------
-
         if target is None:
 
-            # Do NOT randomly wander through visited cells.
             self.status = "EXPLORATION_COMPLETE"
-
             return
 
         # --------------------------------------------------
-        # STEP 3:
-        # BUILD A PATH TO THE UNVISITED REGION
+        # STEP 3: BUILD PATH TO UNVISITED CELL
         # --------------------------------------------------
 
         path = self.find_exploration_path(
@@ -425,12 +406,7 @@ class UAV:
         if not path:
 
             self.status = "EXPLORATION_COMPLETE"
-
             return
-
-        # --------------------------------------------------
-        # MOVE ONLY ONE STEP
-        # --------------------------------------------------
 
         next_position = path[0]
 
@@ -441,7 +417,7 @@ class UAV:
 
             return
 
-        self.x, self.y = next_position
+        self.x, self.y, self.z = next_position
 
         self.visited_cells.add(
             self.get_position()
@@ -458,7 +434,7 @@ class UAV:
         )
 
     # --------------------------------------------------
-    # FIND NEAREST UNVISITED CELL
+    # FIND NEAREST UNVISITED CELL (BFS ON LAYER)
     # --------------------------------------------------
 
     def find_nearest_unvisited_cell(
@@ -469,31 +445,17 @@ class UAV:
     ):
 
         start = self.get_position()
-
         sector_start_x, sector_end_x = sector
 
-        directions = [
-            (0, -1),
-            (0, 1),
-            (-1, 0),
-            (1, 0)
-        ]
-
         queue = deque()
-
         queue.append(start)
 
         visited_search = set()
-
         visited_search.add(start)
 
         while queue:
 
             current = queue.popleft()
-
-            # --------------------------------------------------
-            # If this cell is unexplored, use it
-            # --------------------------------------------------
 
             if (
                 current not in self.visited_cells
@@ -503,14 +465,16 @@ class UAV:
 
                 return current
 
-            for dx, dy in directions:
+            for dx, dy, dz in DIRECTIONS_HORIZONTAL:
 
                 next_x = current[0] + dx
                 next_y = current[1] + dy
+                next_z = current[2]
 
                 next_position = (
                     next_x,
-                    next_y
+                    next_y,
+                    next_z
                 )
 
                 if next_position in visited_search:
@@ -525,24 +489,11 @@ class UAV:
 
                     continue
 
-                if not (
-                    0 <= next_x < disaster_map.width
-                    and
-                    0 <= next_y < disaster_map.height
-                ):
+                if not disaster_map.is_inside(next_x, next_y, next_z):
 
                     continue
 
-                cell = disaster_map.grid[
-                    next_y
-                ][
-                    next_x
-                ]
-
-                if cell in (
-                    OBSTACLE,
-                    HAZARD
-                ):
+                if disaster_map.is_blocked(next_x, next_y, next_z):
 
                     continue
 
@@ -557,7 +508,7 @@ class UAV:
         return None
 
     # --------------------------------------------------
-    # FIND PATH TO EXPLORATION TARGET
+    # FIND PATH TO EXPLORATION TARGET (BFS ON LAYER)
     # --------------------------------------------------
 
     def find_exploration_path(
@@ -569,17 +520,9 @@ class UAV:
         coordinator
     ):
 
-        directions = [
-            (0, -1),
-            (0, 1),
-            (-1, 0),
-            (1, 0)
-        ]
-
         sector_start_x, sector_end_x = sector
 
         queue = deque()
-
         queue.append(start)
 
         came_from = {
@@ -594,14 +537,16 @@ class UAV:
 
                 break
 
-            for dx, dy in directions:
+            for dx, dy, dz in DIRECTIONS_HORIZONTAL:
 
                 next_x = current[0] + dx
                 next_y = current[1] + dy
+                next_z = current[2]
 
                 next_position = (
                     next_x,
-                    next_y
+                    next_y,
+                    next_z
                 )
 
                 if next_position in came_from:
@@ -616,24 +561,11 @@ class UAV:
 
                     continue
 
-                if not (
-                    0 <= next_x < disaster_map.width
-                    and
-                    0 <= next_y < disaster_map.height
-                ):
+                if not disaster_map.is_inside(next_x, next_y, next_z):
 
                     continue
 
-                cell = disaster_map.grid[
-                    next_y
-                ][
-                    next_x
-                ]
-
-                if cell in (
-                    OBSTACLE,
-                    HAZARD
-                ):
+                if disaster_map.is_blocked(next_x, next_y, next_z):
 
                     continue
 
@@ -648,34 +580,22 @@ class UAV:
 
                     continue
 
-                came_from[
-                    next_position
-                ] = current
+                came_from[next_position] = current
 
                 queue.append(
                     next_position
                 )
 
-        # --------------------------------------------------
-        # NO PATH
-        # --------------------------------------------------
-
         if goal not in came_from:
 
             return []
 
-        # --------------------------------------------------
-        # RECONSTRUCT PATH
-        # --------------------------------------------------
-
         path = []
-
         current = goal
 
         while current != start:
 
             path.append(current)
-
             current = came_from[current]
 
         path.reverse()
@@ -683,7 +603,7 @@ class UAV:
         return path
 
     # --------------------------------------------------
-    # SCAN FOR SURVIVORS
+    # SCAN FOR SURVIVORS (3D CUBE)
     # --------------------------------------------------
 
     def scan(
@@ -693,60 +613,57 @@ class UAV:
         coordinator
     ):
 
-        for dy in range(
+        for dz in range(
             -self.sensor_range,
             self.sensor_range + 1
         ):
 
-            for dx in range(
+            for dy in range(
                 -self.sensor_range,
                 self.sensor_range + 1
             ):
 
-                scan_x = self.x + dx
-                scan_y = self.y + dy
-
-                if not (
-                    0 <= scan_x
-                    < disaster_map.width
-                    and
-                    0 <= scan_y
-                    < disaster_map.height
+                for dx in range(
+                    -self.sensor_range,
+                    self.sensor_range + 1
                 ):
 
-                    continue
+                    scan_x = self.x + dx
+                    scan_y = self.y + dy
+                    scan_z = self.z + dz
 
-                if (
-                    disaster_map.grid[
-                        scan_y
-                    ][
-                        scan_x
-                    ]
-                    == SURVIVOR
-                ):
+                    if not disaster_map.is_inside(scan_x, scan_y, scan_z):
 
-                    location = (
-                        scan_x,
-                        scan_y
-                    )
+                        continue
 
                     if (
-                        location
-                        not in coordinator.get_survivors()
-                        and
-                        location
-                        not in coordinator.get_rescued_survivors()
+                        disaster_map.grid[scan_z][scan_y][scan_x]
+                        == SURVIVOR
                     ):
 
-                        coordinator.add_survivor(
-                            location
+                        location = (
+                            scan_x,
+                            scan_y,
+                            scan_z
                         )
 
-                        print(
-                            f"[UAV {self.id}] "
-                            f"Survivor detected at "
-                            f"{location}"
-                        )
+                        if (
+                            location
+                            not in coordinator.get_survivors()
+                            and
+                            location
+                            not in coordinator.get_rescued_survivors()
+                        ):
+
+                            coordinator.add_survivor(
+                                location
+                            )
+
+                            print(
+                                f"[UAV {self.id}] "
+                                f"Survivor detected at "
+                                f"{location}"
+                            )
 
         # --------------------------------------------------
         # ASSIGN NEAREST UNASSIGNED SURVIVOR
@@ -758,17 +675,9 @@ class UAV:
             self.status == "EXPLORING"
         ):
 
-            survivors = (
-                coordinator.get_survivors()
-            )
+            survivors = coordinator.get_survivors()
 
-            # Filter out survivors already
-            # assigned to other UAVs
-            # AND survivors outside this
-            # UAV's sector (unreachable)
-            sector_start_x, sector_end_x = (
-                sector
-            )
+            sector_start_x, sector_end_x = sector
 
             available = [
                 s for s in survivors
@@ -785,22 +694,16 @@ class UAV:
                 nearest = min(
                     available,
                     key=lambda location:
-                    abs(
-                        location[0]
-                        - self.x
-                    )
+                    abs(location[0] - self.x)
                     +
-                    abs(
-                        location[1]
-                        - self.y
-                    )
+                    abs(location[1] - self.y)
+                    +
+                    abs(location[2] - self.z)
                 )
 
-                assigned = (
-                    coordinator.assign_target(
-                        self.id,
-                        nearest
-                    )
+                assigned = coordinator.assign_target(
+                    self.id,
+                    nearest
                 )
 
                 if assigned:
@@ -827,22 +730,15 @@ class UAV:
 
             return
 
-        if (
-            self.get_position()
-            != self.target
-        ):
+        if self.get_position() != self.target:
 
             return
 
         target = self.target
 
-        if disaster_map.rescue_survivor(
-            target
-        ):
+        if disaster_map.rescue_survivor(target):
 
-            coordinator.rescue_survivor(
-                target
-            )
+            coordinator.rescue_survivor(target)
 
             self.rescued_count += 1
 
@@ -852,12 +748,8 @@ class UAV:
                 f"{target}"
             )
 
-        coordinator.clear_target(
-            self.id
-        )
+        coordinator.clear_target(self.id)
 
         self.target = None
-
         self.path = []
-
         self.status = "EXPLORING"

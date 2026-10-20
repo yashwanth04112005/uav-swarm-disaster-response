@@ -1,15 +1,23 @@
 import heapq
+from environment.map import DIRECTIONS_3D
 
 
 def heuristic(a, b):
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+    az = a[2] if len(a) > 2 else 0
+    bz = b[2] if len(b) > 2 else 0
+    return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(az - bz)
 
 
 def find_path(disaster_map, start, goal, sector):
     """
-    Find a shortest 4-connected path from start to goal
-    while keeping the UAV inside its assigned sector.
+    Find a shortest 6-connected 3D path from start to goal
+    while keeping the UAV inside its assigned sector (x-range).
     """
+
+    if len(start) == 2:
+        start = (start[0], start[1], 0)
+    if len(goal) == 2:
+        goal = (goal[0], goal[1], 0)
 
     if start == goal:
         return []
@@ -18,7 +26,7 @@ def find_path(disaster_map, start, goal, sector):
 
     def is_valid(cell):
 
-        x, y = cell
+        x, y, z = cell
 
         # Stay inside assigned sector
         if not (
@@ -28,19 +36,8 @@ def find_path(disaster_map, start, goal, sector):
         ):
             return False
 
-        # Stay inside map
-        if not (
-            0 <= x < disaster_map.width
-            and
-            0 <= y < disaster_map.height
-        ):
-            return False
-
-        # Avoid obstacles and hazards
-        return disaster_map.grid[y][x] not in (
-            1,  # OBSTACLE
-            2   # HAZARD
-        )
+        # Stay inside map and avoid obstacles and hazards
+        return not disaster_map.is_blocked(x, y, z)
 
     # Goal cannot be reached
     if not is_valid(goal):
@@ -61,13 +58,6 @@ def find_path(disaster_map, start, goal, sector):
         start: 0
     }
 
-    directions = [
-        (0, -1),
-        (0, 1),
-        (-1, 0),
-        (1, 0)
-    ]
-
     while frontier:
 
         _, current = heapq.heappop(
@@ -77,11 +67,12 @@ def find_path(disaster_map, start, goal, sector):
         if current == goal:
             break
 
-        for dx, dy in directions:
+        for dx, dy, dz in DIRECTIONS_3D:
 
             next_cell = (
                 current[0] + dx,
-                current[1] + dy
+                current[1] + dy,
+                current[2] + dz
             )
 
             if not is_valid(next_cell):
