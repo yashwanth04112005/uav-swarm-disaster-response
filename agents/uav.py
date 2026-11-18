@@ -9,7 +9,7 @@ from environment.map import (
     DIRECTIONS_HORIZONTAL
 )
 
-from planning.a_star import find_path
+from planning.d_star_lite import find_path
 
 
 class UAV:
